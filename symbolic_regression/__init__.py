@@ -1,1 +1,3 @@
-# Symbolic Regression Package
+# Python
+
+"""symbolic_regression package."""

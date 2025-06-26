@@ -1,6 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "pythonproject"
+name = "mimo-symbolic-regression"
 version = "0.1.0"
-description = "Add your description here"
-requires-python = ">=3.13"
-dependencies = []
+description = "Multiple Input Multiple Output Symbolic Regression in Python"
+authors = [
+  { name = "Your Name", email = "your.email@example.com" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = [
+  "numpy>=1.21",
+  "matplotlib>=3.4",
+  "numba>=0.55",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "gprof2dot",
+  "black"
+]
+
+[tool.setuptools.packages.find]
+where = ["symbolic_regression"]
+
+[project.scripts]
+example-usage = "examples.example_usage:main"

@@ -17,6 +17,8 @@ def test_simple_mimo():
     y2 = X[:, 0] * X[:, 1]  # Product
     
     y = np.column_stack([y1, y2])
+
+    print("Test data generated:")
     
     print("Test data shapes:")
     print(f"X: {X.shape}")
