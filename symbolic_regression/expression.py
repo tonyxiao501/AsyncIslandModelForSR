@@ -1,9 +1,48 @@
 import numpy as np
+import numba
 from abc import ABC, abstractmethod
 
-class Node(ABC):
-  """Abstract base class for expression tree nodes"""
+# JIT-compiled helper functions
+@numba.njit
+def evaluate_variable(X, index):
+  return X[:, index].astype(np.float64)
 
+@numba.njit
+def evaluate_constant(n_samples, value):
+  return np.full(n_samples, value, dtype=np.float64)
+
+@numba.njit
+def evaluate_binary_op(left_val, right_val, operator):
+  if operator == '+':
+    return left_val + right_val
+  elif operator == '-':
+    return left_val - right_val
+  elif operator == '*':
+    return left_val * right_val
+  elif operator == '/':
+    out = np.ones_like(left_val)
+    mask = right_val != 0
+    out[mask] = left_val[mask] / right_val[mask]
+    return out
+  elif operator == '^':
+    return np.power(left_val, np.clip(right_val, -10, 10))
+  return np.zeros_like(left_val)
+
+@numba.njit
+def evaluate_unary_op(operand_val, operator):
+  if operator == 'sin':
+    return np.sin(operand_val)
+  elif operator == 'cos':
+    return np.cos(operand_val)
+  elif operator == 'exp':
+    return np.exp(np.clip(operand_val, -10, 10))
+  elif operator == 'log':
+    return np.log(np.abs(operand_val) + 1e-8)
+  elif operator == 'sqrt':
+    return np.sqrt(np.abs(operand_val))
+  return np.zeros_like(operand_val)
+
+class Node(ABC):
   @abstractmethod
   def evaluate(self, X: np.ndarray) -> np.ndarray:
     pass
@@ -20,14 +59,16 @@ class Node(ABC):
   def size(self) -> int:
     pass
 
-class VariableNode(Node):
-  """Represents input variables (X0, X1, X2, ...)"""
+  def compress_constants(self):
+    pass
 
+
+class VariableNode(Node):
   def __init__(self, index: int):
     self.index = index
 
   def evaluate(self, X: np.ndarray) -> np.ndarray:
-    return X[:, self.index].astype(np.float64)
+    return evaluate_variable(X, self.index)
 
   def to_string(self) -> str:
     return f"X{self.index}"
@@ -37,15 +78,15 @@ class VariableNode(Node):
 
   def size(self) -> int:
     return 1
+  def compress_constants(self) -> Node:
+    return self  # Variables do not compress constants
 
 class ConstantNode(Node):
-  """Represents constant values"""
-
   def __init__(self, value: float):
     self.value = float(value)
 
   def evaluate(self, X: np.ndarray) -> np.ndarray:
-    return np.full(X.shape[0], self.value, dtype=np.float64)
+    return evaluate_constant(X.shape[0], self.value)
 
   def to_string(self) -> str:
     return f"{self.value:.3f}"
@@ -55,31 +96,20 @@ class ConstantNode(Node):
 
   def size(self) -> int:
     return 1
+  def compress_constants(self) -> Node:
+    return self  # Constants do not compress further
 
 class BinaryOpNode(Node):
-  """Represents binary operations (+, -, *, /, ^)"""
-
   def __init__(self, operator: str, left: Node, right: Node):
     self.operator = operator
     self.left = left
     self.right = right
 
-    self.ops = {
-      '+': lambda a, b: a + b,
-      '-': lambda a, b: a - b,
-      '*': lambda a, b: a * b,
-      '/': lambda a, b: np.divide(a, b, out=np.ones_like(a), where=b!=0),
-      '^': lambda a, b: np.power(a, np.clip(b, -10, 10))
-    }
-
   def evaluate(self, X: np.ndarray) -> np.ndarray:
     left_val = self.left.evaluate(X)
     right_val = self.right.evaluate(X)
-
     try:
-      with np.errstate(invalid='ignore', divide='ignore'):
-        result = self.ops[self.operator](left_val, right_val)
-      # Handle invalid results
+      result = evaluate_binary_op(left_val, right_val, self.operator)
       result = np.nan_to_num(result, nan=0.0, posinf=1e6, neginf=-1e6)
       return result.astype(np.float64)
     except Exception:
@@ -93,27 +123,23 @@ class BinaryOpNode(Node):
 
   def size(self) -> int:
     return 1 + self.left.size() + self.right.size()
+  def compress_constants(self) -> Node:
+    left_c = self.left.compress_constants()
+    right_c = self.right.compress_constants()
+    if isinstance(left_c, ConstantNode) and isinstance(right_c, ConstantNode):
+      val = evaluate_binary_op(np.array([left_c.value]), np.array([right_c.value]), self.operator)[0]
+      return ConstantNode(val)
+    return BinaryOpNode(self.operator, left_c, right_c)
 
 class UnaryOpNode(Node):
-  """Represents unary operations (sin, cos, exp, log, sqrt)"""
-
   def __init__(self, operator: str, operand: Node):
     self.operator = operator
     self.operand = operand
 
-    self.ops = {
-      'sin': lambda x: np.sin(x),
-      'cos': lambda x: np.cos(x),
-      'exp': lambda x: np.exp(np.clip(x, -10, 10)),
-      'log': lambda x: np.log(np.abs(x) + 1e-8),
-      'sqrt': lambda x: np.sqrt(np.abs(x))
-    }
-
   def evaluate(self, X: np.ndarray) -> np.ndarray:
     operand_val = self.operand.evaluate(X)
-
     try:
-      result = self.ops[self.operator](operand_val)
+      result = evaluate_unary_op(operand_val, self.operator)
       result = np.nan_to_num(result, nan=0.0, posinf=1e6, neginf=-1e6)
       return result.astype(np.float64)
     except Exception:
@@ -127,10 +153,14 @@ class UnaryOpNode(Node):
 
   def size(self) -> int:
     return 1 + self.operand.size()
+  def compress_constants(self) -> Node:
+    operand_c = self.operand.compress_constants()
+    if isinstance(operand_c, ConstantNode):
+      val = evaluate_unary_op(np.array([operand_c.value]), self.operator)[0]
+      return ConstantNode(val)
+    return UnaryOpNode(self.operator, operand_c)
 
 class Expression:
-  """Represents a complete mathematical expression"""
-
   def __init__(self, root: Node):
     self.root = root
 
@@ -145,3 +175,5 @@ class Expression:
 
   def size(self) -> int:
     return self.root.size()
+  def compress_constants(self) -> Node:
+    return Expression(self.root.compress_constants())
