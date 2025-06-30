@@ -4,10 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="da804525-1806-4726-a4b2-c9e7ccbee95f" name="Changes" comment="switched to python 3.11 which has a larger range of jit supports">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/symbolic_regression/expression.py" beforeDir="false" afterPath="$PROJECT_DIR$/symbolic_regression/expression.py" afterDir="false" />
-    </list>
+    <list default="true" id="da804525-1806-4726-a4b2-c9e7ccbee95f" name="Changes" comment="Added constant compression to the expression.py" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -95,7 +92,7 @@
       <workItem from="1750928297197" duration="760000" />
       <workItem from="1751003759989" duration="405000" />
       <workItem from="1751079891095" duration="41000" />
-      <workItem from="1751124714378" duration="215000" />
+      <workItem from="1751124714378" duration="326000" />
     </task>
     <task id="LOCAL-00001" summary="switched to python 3.11 which has a larger range of jit supports">
       <option name="closed" value="true" />
@@ -105,7 +102,15 @@
       <option name="project" value="LOCAL" />
       <updated>1750928695156</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="Added constant compression to the expression.py">
+      <option name="closed" value="true" />
+      <created>1751125029834</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1751125029834</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -124,10 +129,11 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="switched to python 3.11 which has a larger range of jit supports" />
-    <option name="LAST_COMMIT_MESSAGE" value="switched to python 3.11 which has a larger range of jit supports" />
+    <MESSAGE value="Added constant compression to the expression.py" />
+    <option name="LAST_COMMIT_MESSAGE" value="Added constant compression to the expression.py" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/PythonProject$test_simple.coverage" NAME="test_simple Coverage Results" MODIFIED="1750658533585" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
-    <SUITE FILE_PATH="coverage/PythonProject$example_usage.coverage" NAME="example_usage Coverage Results" MODIFIED="1750929025466" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/examples" />
+    <SUITE FILE_PATH="coverage/PythonProject$example_usage.coverage" NAME="example_usage Coverage Results" MODIFIED="1751124934397" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/examples" />
   </component>
 </project>
