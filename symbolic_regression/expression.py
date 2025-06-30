@@ -59,6 +59,7 @@ class Node(ABC):
   def size(self) -> int:
     pass
 
+  @abstractmethod
   def compress_constants(self):
     pass
 
@@ -129,6 +130,10 @@ class BinaryOpNode(Node):
     if isinstance(left_c, ConstantNode) and isinstance(right_c, ConstantNode):
       val = evaluate_binary_op(np.array([left_c.value]), np.array([right_c.value]), self.operator)[0]
       return ConstantNode(val)
+    if left_c is None:
+      left_c = self.left
+    if right_c is None:
+      right_c = self.right
     return BinaryOpNode(self.operator, left_c, right_c)
 
 class UnaryOpNode(Node):
@@ -155,6 +160,8 @@ class UnaryOpNode(Node):
     return 1 + self.operand.size()
   def compress_constants(self) -> Node:
     operand_c = self.operand.compress_constants()
+    if operand_c is None:
+      operand_c = self.operand
     if isinstance(operand_c, ConstantNode):
       val = evaluate_unary_op(np.array([operand_c.value]), self.operator)[0]
       return ConstantNode(val)
@@ -175,5 +182,8 @@ class Expression:
 
   def size(self) -> int:
     return self.root.size()
-  def compress_constants(self) -> Node:
-    return Expression(self.root.compress_constants())
+  def compress_constants(self) -> 'Expression':
+    node = self.root.compress_constants()
+    if node is None:
+      node = self.root
+    return Expression(node)
