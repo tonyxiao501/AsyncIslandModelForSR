@@ -501,6 +501,9 @@ class MIMOSymbolicRegressor:
 
     return expressions
 
+  def get_expr_obj(self) -> List[Expression]:
+    return self.best_expressions
+
   def get_raw_expressions(self) -> List[str]:
     """Get raw expressions without simplification"""
     return [expr.to_string() for expr in self.best_expressions]

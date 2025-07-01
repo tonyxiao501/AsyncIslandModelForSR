@@ -1,6 +1,7 @@
 import numpy as np
+import sympy as sp
 from abc import ABC, abstractmethod
-from typing import Optional, Dict
+from typing import Optional, Dict, Generator, List
 from .operators import (
   NodeType, OpType, BINARY_OP_MAP, UNARY_OP_MAP,
   evaluate_variable, evaluate_constant, evaluate_binary_op, evaluate_unary_op,
@@ -81,6 +82,13 @@ class Node(ABC):
   @abstractmethod
   def copy(self) -> 'Node':
     pass
+  
+  @abstractmethod
+  def to_sympy(self, c_generator: Generator) -> sp.Expr:
+    pass
+  
+  def get_constants(self, constant_list: List[float]):
+    pass
 
   def size(self) -> int:
     """Original node count"""
@@ -143,6 +151,9 @@ class VariableNode(Node):
 
   def compress_constants(self):
     return self
+  
+  def to_sympy(self, c_generator):
+    return sp.Symbol(f'x{self.index}')
 
 
 class ConstantNode(Node):
@@ -172,6 +183,12 @@ class ConstantNode(Node):
 
   def compress_constants(self):
     return self
+  
+  def to_sympy(self, c_generator):
+    return next(c_generator)
+  
+  def get_constants(self, constant_list):
+    constant_list.append(self.value)
 
 
 class BinaryOpNode(Node):
@@ -241,6 +258,25 @@ class BinaryOpNode(Node):
       right_c = self.right
 
     return get_global_pool().get_binary_node(self.operator, left_c, right_c)
+  
+  def to_sympy(self, c_generator):
+    if self.operator == '+':
+      return self.left.to_sympy(c_generator) + self.right.to_sympy(c_generator)
+    elif self.operator == '-':
+      return self.left.to_sympy(c_generator) - self.right.to_sympy(c_generator)
+    elif self.operator == '*':
+      #return self.left.to_sympy(c_generator) * self.right.to_sympy(c_generator)
+      return sp.Mul(self.left.to_sympy(c_generator), self.right.to_sympy(c_generator))
+    elif self.operator == '/':
+      return self.left.to_sympy(c_generator) / self.right.to_sympy(c_generator)
+    elif self.operator == '^':
+      return sp.Pow(self.left.to_sympy(c_generator), self.right.to_sympy(c_generator))
+    else:
+      raise RuntimeWarning(f"to_sympy reached unexpected operation at node {type(self)}")
+    
+  def get_constants(self, constant_list):
+    self.left.get_constants(constant_list)
+    self.right.get_constants(constant_list)
 
 
 class UnaryOpNode(Node):
@@ -294,3 +330,18 @@ class UnaryOpNode(Node):
       val = evaluate_unary_op(np.array([operand_c.value]), self.operator)[0]
       return get_global_pool().get_constant_node(val)
     return get_global_pool().get_unary_node(self.operator, operand_c)
+  
+  def to_sympy(self, c_generator):
+    if self.operator == 'sin':
+      return sp.sin(self.operand.to_sympy(c_generator))
+    elif self.operator == 'cos':
+      return sp.cos(self.operand.to_sympy(c_generator))
+    elif self.operator == 'sqrt':
+      return sp.sqrt(self.operand.to_sympy(c_generator))
+    elif self.operator == 'log':
+      return sp.log(self.operand.to_sympy(c_generator))
+    elif self.operator == 'exp':
+      return sp.exp(self.operand.to_sympy(c_generator))
+
+  def get_constants(self, constant_list):
+    self.operand.get_constants(constant_list)

@@ -1,6 +1,8 @@
 import numpy as np
 from typing import Optional
 from expression_tree.core.node import Node
+import sympy as sp
+from typing import Callable
 
 
 class Expression:
@@ -40,6 +42,33 @@ class Expression:
   def clear_cache(self):
     """Clear cached values"""
     self._string_cache = None
+    
+  def to_sympy(self) -> sp.Expr:   
+    return self.root.to_sympy(sp.numbered_symbols(prefix='c'))
+
+  def get_constants(self) -> tuple:
+    const_list = []
+    self.root.get_constants(const_list)
+    return const_list
+
+# Function: lambda X, *params -> Y
+  def vector_lambdify(self) -> Callable:
+    constants = self.get_constants()
+    sp_expr = self.to_sympy()
+    c_dim = len(constants)
+    x_dim = len(sp_expr.free_symbols) - c_dim
+    symbols = sp.symbols(f'x0:{x_dim}')
+    if c_dim > 0:
+        symbols += sp.symbols(f'c0:{c_dim}')
+    lambda_func = sp.lambdify(symbols, sp_expr, modules='numpy')
+    # wrapper for unpack parameters
+    def wrapper(X, *param):
+        X_arr = np.array(X)
+        if len(X_arr.shape) == 0:
+            return lambda_func(X, *param)
+        else:
+            return lambda_func(*X, *param)
+    return np.vectorize(wrapper)
 
   def __hash__(self) -> int:
     return hash(self.root)

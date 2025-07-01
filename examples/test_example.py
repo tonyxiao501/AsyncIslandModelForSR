@@ -1,5 +1,7 @@
 import sys
 import os
+from scipy.optimize import curve_fit
+import pdb
 
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -41,7 +43,7 @@ def main():
 
   model = MIMOSymbolicRegressor(
     population_size=150,
-    generations=1000,
+    generations=100,
     mutation_rate=0.15,
     crossover_rate=0.8,
     tournament_size=3,
@@ -76,6 +78,17 @@ def main():
   # Get discovered expression
   discovered_expressions = model.get_expressions()
   discovered_expr = discovered_expressions[0] if discovered_expressions else "No expression found"
+  expr_obj = model.get_expr_obj()[0]
+  expr_constants = expr_obj.get_constants()
+  print(f"=============  {expr_obj.to_sympy()}, {expr_constants}")
+  f = expr_obj.vector_lambdify()
+  try: 
+    #popt, pcov = curve_fit(f, X_train, y_true_train, expr_constants)
+    print(f(X_train, *expr_constants).shape)
+    print(y_true_train.shape)
+  except Exception as e:
+    print(e)
+    pdb.post_mortem()
 
   print(f"\n{'=' * 70}")
   print("SYMBOLIC REGRESSION RESULTS:")
