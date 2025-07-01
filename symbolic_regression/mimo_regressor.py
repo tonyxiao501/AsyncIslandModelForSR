@@ -27,7 +27,9 @@ class MIMOSymbolicRegressor:
                diversity_threshold: float = 0.7,
                adaptive_rates: bool = True,
                restart_threshold: int = 25,
-               elite_fraction: float = 0.1):
+               elite_fraction: float = 0.1,
+               console_log = True
+               ):
 
     self.population_size = population_size
     self.generations = generations
@@ -38,6 +40,8 @@ class MIMOSymbolicRegressor:
     self.parsimony_coefficient = parsimony_coefficient
     self.sympy_simplify = sympy_simplify
     self.advanced_simplify = advanced_simplify
+    
+    self.console_log = console_log
 
     # Enhanced evolution parameters
     self.diversity_threshold = diversity_threshold
@@ -90,13 +94,11 @@ class MIMOSymbolicRegressor:
     genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25)
     best_fitness = -np.inf
     plateau_counter = 0
-
-    print(f"Starting evolution with {self.population_size} individuals for {self.generations} generations")
+    if self.console_log:
+      print(f"Starting evolution with {self.population_size} individuals for {self.generations} generations")
 
     for generation in range(self.generations):
       # Evaluate fitness with enhanced scoring
-      if constant_optimize:
-          self._optimize_constants(X.squeeze(), y, population)
           
       fitness_scores = self._evaluate_population_enhanced(population, X, y)
 
@@ -124,10 +126,11 @@ class MIMOSymbolicRegressor:
       self.best_fitness_history.append(best_fitness)
 
       # Enhanced progress reporting
-      if generation % 10 == 0 or generation < 20:
-        print(f"Gen {generation:3d}: Best={best_fitness:.6f} Avg={generation_avg_fitness:.6f} "
-              f"Div={diversity_score:.3f} Stag={self.stagnation_counter} "
-              f"MutRate={self.current_mutation_rate:.3f}")
+      if self.console_log:
+        if generation % 10 == 0 or generation < 20:
+            print(f"Gen {generation:3d}: Best={best_fitness:.6f} Avg={generation_avg_fitness:.6f} "
+                f"Div={diversity_score:.3f} Stag={self.stagnation_counter} "
+                f"MutRate={self.current_mutation_rate:.3f}")
 
       # Adaptive parameter adjustment
       if self.adaptive_rates:
@@ -135,7 +138,8 @@ class MIMOSymbolicRegressor:
 
       # Handle long-term stagnation with population restart
       if self.stagnation_counter >= self.restart_threshold:
-        print(f"Population restart at generation {generation} (stagnation: {self.stagnation_counter})")
+        if self.console_log:
+            print(f"Population restart at generation {generation} (stagnation: {self.stagnation_counter})")
         population = self._restart_population_enhanced(population, fitness_scores, generator)
         self.stagnation_counter = 0
         plateau_counter = 0
@@ -144,21 +148,27 @@ class MIMOSymbolicRegressor:
       # Enhanced diversity injection for moderate stagnation
       if self.stagnation_counter > 10 and diversity_score < self.diversity_threshold:
         population = self._inject_diversity(population, fitness_scores, generator, 0.3)
-        print(f"Diversity injection at generation {generation}")
+        if self.console_log:
+            print(f"Diversity injection at generation {generation}")
 
       # Enhanced reproduction with multiple strategies
       new_population = self._enhanced_reproduction_v2(
         population, fitness_scores, genetic_ops, diversity_score, generation)
 
       population = new_population
+      
+      # Constant Optimize
+      if constant_optimize:
+          self._optimize_constants(X.squeeze(), y, population)
 
     # Final reporting
     final_best = max(self.fitness_history) if self.fitness_history else -np.inf
-    print(f"\nEvolution completed:")
-    print(f"Final best fitness: {final_best:.6f}")
-    if self.best_expressions:
-      print(f"Best expression: {self.best_expressions[0].to_string()}")
-      print(f"Expression complexity: {self.best_expressions[0].complexity():.2f}")
+    if self.console_log:
+      print(f"\nEvolution completed:")
+      print(f"Final best fitness: {final_best:.6f}")
+      if self.best_expressions:
+        print(f"Best expression: {self.best_expressions[0].to_string()}")
+        print(f"Expression complexity: {self.best_expressions[0].complexity():.2f}")
 
   def _generate_diverse_population(self, generator: ExpressionGenerator) -> List[Expression]:
     """Generate diverse initial population with multiple strategies"""
@@ -620,8 +630,9 @@ class MIMOSymbolicRegressor:
             new_population[idx] = new_expr
             replacements_made += 1
 
-    print(f"Diversity injection: replaced {replacements_made}/{n_to_replace} individuals "
-          f"(rate: {injection_rate:.2f}, stagnation: {self.stagnation_counter})")
+    if self.console_log:
+        print(f"Diversity injection: replaced {replacements_made}/{n_to_replace} individuals "
+            f"(rate: {injection_rate:.2f}, stagnation: {self.stagnation_counter})")
 
     return new_population
 
@@ -792,10 +803,11 @@ class MIMOSymbolicRegressor:
   def _optimize_constants(self, X, y, popolation: List[Expression]):
     for expr in popolation:
       expr_vec = expr.vector_lambdify()
-      try:
-        with warnings.catch_warnings():
-          warnings.simplefilter("error", OptimizeWarning)
-          popt, pcov = curve_fit(expr_vec, X, y, expr.get_constants())
-          expr.set_constants(popt)
-      except OptimizeWarning:
-        pass # failed to optimize
+      if expr_vec is not None:
+        try:
+          with warnings.catch_warnings():
+            warnings.simplefilter("error", OptimizeWarning)
+            popt, pcov = curve_fit(expr_vec, X, y, expr.get_constants())
+            expr.set_constants(popt)
+        except OptimizeWarning:
+          pass # failed to optimize

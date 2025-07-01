@@ -42,7 +42,7 @@ def main():
 
   model = MIMOSymbolicRegressor(
     population_size=150,
-    generations=500,
+    generations=200,
     mutation_rate=0.15,
     crossover_rate=0.8,
     tournament_size=3,
@@ -59,7 +59,7 @@ def main():
   print("This should converge relatively quickly...")
 
   # Train the model
-  model.fit(X_train, y_train)
+  model.fit(X_train, y_train, constant_optimize=True)
 
   # Make predictions
   y_pred_train = model.predict(X_train)
@@ -94,7 +94,7 @@ def main():
   print(f"Generations run:      {len(model.fitness_history)}")
 
   # Create comprehensive visualization
-  fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+  fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 
   # Main function comparison plot
   ax1 = axes[0, 0]

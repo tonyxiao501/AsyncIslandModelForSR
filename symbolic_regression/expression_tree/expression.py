@@ -60,15 +60,23 @@ class Expression:
     self.clear_cache() 
 
 # Function: lambda X, *params -> Y
+# Returns None if fails to lambdify or bad operation (x - x) -> 0
   def vector_lambdify(self) -> Callable:
     constants = self.get_constants()
     sp_expr = self.to_sympy()
     c_dim = len(constants)
     x_dim = len(sp_expr.free_symbols) - c_dim
+    if x_dim <= 0:
+        return None
     symbols = sp.symbols(f'x0:{x_dim}')
     if c_dim > 0:
         symbols += sp.symbols(f'c0:{c_dim}')
-    lambda_func = sp.lambdify(symbols, sp_expr, modules='numpy')
+    try:
+        lambda_func = sp.lambdify(symbols, sp_expr, modules='numpy')
+    except:
+        return None
+    if sp.simplify(sp_expr).free_symbols != symbols:
+        return None
     # wrapper for unpack parameters
     def wrapper(X, *param):
         X_arr = np.array(X)
