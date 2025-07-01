@@ -50,6 +50,14 @@ class Expression:
     const_list = []
     self.root.get_constants(const_list)
     return const_list
+  
+  def set_constants(self, constants):
+    if len(self.get_constants()) != len(constants):
+        raise RuntimeError("Error for setting constants with different shape")
+    if not isinstance(constants, list):
+        constants = list(constants)
+    self.root.set_constants(constants)   
+    self.clear_cache() 
 
 # Function: lambda X, *params -> Y
   def vector_lambdify(self) -> Callable:

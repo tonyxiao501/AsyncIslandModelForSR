@@ -1,4 +1,6 @@
 import numpy as np
+from scipy.optimize import OptimizeWarning, curve_fit
+import warnings
 import random
 from typing import List, Optional, Dict, Any
 import sympy as sp
@@ -59,7 +61,7 @@ class MIMOSymbolicRegressor:
     if self.advanced_simplify:
       self.sympy_simplifier = SymPySimplifier()
 
-  def fit(self, X: np.ndarray, y: np.ndarray):
+  def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize = False):
     """Enhanced fit with diversity preservation and adaptive evolution"""
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
@@ -93,6 +95,9 @@ class MIMOSymbolicRegressor:
 
     for generation in range(self.generations):
       # Evaluate fitness with enhanced scoring
+      if constant_optimize:
+          self._optimize_constants(X.squeeze(), y, population)
+          
       fitness_scores = self._evaluate_population_enhanced(population, X, y)
 
       # Calculate diversity metrics
@@ -783,3 +788,14 @@ class MIMOSymbolicRegressor:
             new_population.append(child)
 
     return new_population[:self.population_size]
+
+  def _optimize_constants(self, X, y, popolation: List[Expression]):
+    for expr in popolation:
+      expr_vec = expr.vector_lambdify()
+      try:
+        with warnings.catch_warnings():
+          warnings.simplefilter("error", OptimizeWarning)
+          popt, pcov = curve_fit(expr_vec, X, y, expr.get_constants())
+          expr.set_constants(popt)
+      except OptimizeWarning:
+        pass # failed to optimize

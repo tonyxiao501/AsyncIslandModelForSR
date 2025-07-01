@@ -89,6 +89,9 @@ class Node(ABC):
   
   def get_constants(self, constant_list: List[float]):
     pass
+  
+  def set_constants(self, constant_list: List[float]):
+    pass
 
   def size(self) -> int:
     """Original node count"""
@@ -189,6 +192,10 @@ class ConstantNode(Node):
   
   def get_constants(self, constant_list):
     constant_list.append(self.value)
+    
+  def set_constants(self, constant_list):
+    self.value = constant_list[0]
+    constant_list.pop(0)
 
 
 class BinaryOpNode(Node):
@@ -278,6 +285,9 @@ class BinaryOpNode(Node):
     self.left.get_constants(constant_list)
     self.right.get_constants(constant_list)
 
+  def set_constants(self, constant_list):
+    self.left.set_constants(constant_list)
+    self.right.set_constants(constant_list)
 
 class UnaryOpNode(Node):
   __slots__ = ('operator', 'operand')
@@ -345,3 +355,6 @@ class UnaryOpNode(Node):
 
   def get_constants(self, constant_list):
     self.operand.get_constants(constant_list)
+
+  def set_constants(self, constant_list):
+    self.operand.set_constants(constant_list)
