@@ -42,7 +42,7 @@ def main():
 
   model = MIMOSymbolicRegressor(
     population_size=150,
-    generations=200,
+    generations=100,
     mutation_rate=0.15,
     crossover_rate=0.8,
     tournament_size=3,

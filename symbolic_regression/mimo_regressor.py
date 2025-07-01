@@ -69,6 +69,7 @@ class MIMOSymbolicRegressor:
     """Enhanced fit with diversity preservation and adaptive evolution"""
     X = np.asarray(X, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
+    last_update = 0
 
     if X.ndim == 1:
       X = X.reshape(-1, 1)
@@ -123,6 +124,8 @@ class MIMOSymbolicRegressor:
         self.stagnation_counter += 1
         plateau_counter += 1
 
+      if generation > 0 and best_fitness - self.best_fitness_history[-1] > 1e-3:
+        last_update = generation
       self.best_fitness_history.append(best_fitness)
 
       # Enhanced progress reporting
@@ -159,7 +162,7 @@ class MIMOSymbolicRegressor:
       
       # Constant Optimize
       if constant_optimize:
-          self._optimize_constants(X.squeeze(), y, population)
+          self._optimize_constants(X.squeeze(), y, population, generation - last_update)
 
     # Final reporting
     final_best = max(self.fitness_history) if self.fitness_history else -np.inf
@@ -800,8 +803,10 @@ class MIMOSymbolicRegressor:
 
     return new_population[:self.population_size]
 
-  def _optimize_constants(self, X, y, popolation: List[Expression]):
+  def _optimize_constants(self, X, y, popolation: List[Expression], steps_unchanged):
     for expr in popolation:
+      if not self._should_optimize_constants(steps_unchanged):
+        continue
       expr_vec = expr.vector_lambdify()
       if expr_vec is not None:
         try:
@@ -811,3 +816,10 @@ class MIMOSymbolicRegressor:
             expr.set_constants(popt)
         except OptimizeWarning:
           pass # failed to optimize
+
+  def _should_optimize_constants(self, steps_unchanged):
+    p = 1 / (1 + self.population_size * np.exp(-5 * steps_unchanged / self.generations))
+    if np.random.rand() < p:
+      return True
+    else:
+      return False
