@@ -18,7 +18,6 @@ class ExpressionValidator:
 
     except Exception:
       return False
-
   @staticmethod
   def _is_structurally_valid(node: Node) -> bool:
     if isinstance(node, ConstantNode):
