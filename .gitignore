@@ -177,3 +177,5 @@ Thumbs.db
 *.tmp
 *.temp
 *~
+
+.idea
