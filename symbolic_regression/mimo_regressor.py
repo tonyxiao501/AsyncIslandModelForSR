@@ -1,14 +1,16 @@
 import numpy as np
+from scipy.constants import golden_ratio, electron_mass, neutron_mass
 from scipy.optimize import OptimizeWarning, curve_fit
 import warnings
 import random
 from typing import List, Optional, Dict, Any
 import sympy as sp
 from .expression_tree import Expression
-from .expression_tree.core.node import Node
+from .expression_tree.core.node import Node, ConstantNode
 from .generator import ExpressionGenerator, BiasedExpressionGenerator
 from .genetic_ops import GeneticOperations
 from .expression_tree.utils.sympy_utils import SymPySimplifier
+import scipy.constants as constants
 
 
 class MIMOSymbolicRegressor:
@@ -738,20 +740,88 @@ class MIMOSymbolicRegressor:
     """Generate more complex diverse expressions"""
     from .expression_tree.core.node import BinaryOpNode, UnaryOpNode, VariableNode, ConstantNode
 
-    var = VariableNode(0)
-    const1 = ConstantNode(np.random.uniform(-1, 1))
-    const2 = ConstantNode(np.random.uniform(-1, 1))
-    const3 = ConstantNode(np.random.uniform(-1, 1))
+    scientific_constants = {
+      'pi': constants.pi,
+      'e': constants.e,
+      'golden_ratio': constants.golden_ratio,
+      'euler_gamma': 0.5772156649015329,  # Euler-Mascheroni constant
+      'avogadro': constants.Avogadro / 1e23,
+      'boltzmann': constants.Boltzmann * 1e23,
+      'planck': constants.Planck * 1e34,
+      'speed_of_light': constants.c / 1e8,
+      'gas_constant': constants.gas_constant * 1e3,
+      'electron_charge': constants.e * 1e19,
+      'gravitational_constant': constants.G * 1e11,
+      'magnetic_constant': constants.mu_0 * 1e7,
+      'electric_constant': constants.epsilon_0 * 1e12,
+      'fine_structure': constants.alpha * 1e3,
+      'planck_length': constants.hbar * 1e34 / (constants.c * constants.epsilon_0),
+      'stefan_boltzmann': constants.sigma * 1e12,
+      'electron_mass': constants.electron_mass * 1e30,
+      'neutron_mass': constants.neutron_mass * 1e30,
+    }
 
-    # Complex patterns like: a*sin(x) + b*exp(-x/c)
-    sin_term = BinaryOpNode('*', const1, UnaryOpNode('sin', var))
+    scientific_constant_rate = 0.4
 
-    # Safe exponential term
-    exp_arg = BinaryOpNode('/', BinaryOpNode('*', ConstantNode(-1), var),
-                          ConstantNode(np.random.uniform(2, 5)))
-    exp_term = BinaryOpNode('*', const2, UnaryOpNode('exp', exp_arg))
+    def get_constant_value():
+      if random.random() < scientific_constant_rate:
+        const_name = random.choice(list(scientific_constants.keys()))
+        base_value = scientific_constants[const_name]
+        # Add small random perturbation (±20%) to allow evolution
+        perturbation = random.uniform(0.8, 1.2)
+        return base_value * perturbation
+      else:
+        return random.uniform(-2, 2)
 
-    complex_expr = BinaryOpNode('+', sin_term, exp_term)
+    var = VariableNode(random.randint(0, self.n_inputs - 1))
+    const1 = ConstantNode(get_constant_value())
+    const2 = ConstantNode(get_constant_value())
+    const3 = ConstantNode(get_constant_value())
+
+    pattern_choice = random.random()
+
+    if pattern_choice < 0.25:
+      pi_const = ConstantNode(constants.pi * random.uniform(0.8, 1.2))
+      sin_arg = BinaryOpNode('*', pi_const, var)
+      sin_term = BinaryOpNode('*', const1, UnaryOpNode('sin', sin_arg))
+
+      exp_arg = BinaryOpNode('/', BinaryOpNode('*', ConstantNode(-1), var), const3)
+      exp_term = BinaryOpNode('*', const2, UnaryOpNode('exp', exp_arg))
+
+      complex_expr = BinaryOpNode('+', sin_term, exp_term)
+
+    elif pattern_choice < 0.5:
+      # Pattern 2: a*exp(-x²/2σ²) - Gaussian-like with scientific constant
+      sigma_const = ConstantNode(random.choice([constants.golden_ratio, constants.e, constants.pi / 2]) * random.uniform(0.8, 1.2))
+      x_squared = BinaryOpNode('*', var, var)
+      sigma_squared = BinaryOpNode('*', sigma_const, sigma_const)
+      exp_arg = BinaryOpNode('/', BinaryOpNode('*', ConstantNode(-0.5), x_squared), sigma_squared)
+
+      complex_expr = BinaryOpNode('*', const1, UnaryOpNode('exp', exp_arg))
+
+    elif pattern_choice < 0.75:
+      # Pattern 3: a/(1 + exp(-k*(x-b))) - Sigmoid with scientific constants
+      k_const = ConstantNode(random.choice([constants.e, constants.golden_ratio, 2 * constants.pi]) * random.uniform(0.5, 1.5))
+      x_shifted = BinaryOpNode('-', var, const2)
+      sigmoid_arg = BinaryOpNode('*', ConstantNode(-1), BinaryOpNode('*', k_const, x_shifted))
+      exp_term = UnaryOpNode('exp', sigmoid_arg)
+      denominator = BinaryOpNode('+', ConstantNode(1), exp_term)
+
+      complex_expr = BinaryOpNode('/', const1, denominator)
+
+    else:
+      # Pattern 4: a*x*exp(-γ*x)*cos(ω*x) - Damped oscillation with scientific constants
+      gamma_const = ConstantNode(random.choice([constants.golden_ratio, constants.e / 2, 1 / constants.pi]) * random.uniform(0.8, 1.2))
+      omega_const = ConstantNode(random.choice([constants.pi, 2 * constants.pi, constants.pi / 2]) * random.uniform(0.8, 1.2))
+
+      exp_arg = BinaryOpNode('*', ConstantNode(-1), BinaryOpNode('*', gamma_const, var))
+      exp_term = UnaryOpNode('exp', exp_arg)
+
+      cos_arg = BinaryOpNode('*', omega_const, var)
+      cos_term = UnaryOpNode('cos', cos_arg)
+
+      product = BinaryOpNode('*', BinaryOpNode('*', const1, var), exp_term)
+      complex_expr = BinaryOpNode('*', product, cos_term)
 
     return Expression(complex_expr)
 
