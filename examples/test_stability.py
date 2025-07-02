@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
@@ -7,7 +11,7 @@ from tqdm import tqdm
 
 diff_thresh = 1e-3
 num_tests = 100
-noise = 5
+noise = 0
 
 def generate_complex_function(X):
   """Generate a complex 1-input, 1-output function"""
@@ -27,10 +31,10 @@ def get_last_rising_point(arr):
     else:
         return -1
 
-def run_test():
+def run_test(X_train, y_train):
     model = MIMOSymbolicRegressor(
-    population_size=150,
-    generations=100,
+    population_size=200,
+    generations=200,
     mutation_rate=0.15,
     crossover_rate=0.8,
     tournament_size=3,
@@ -45,23 +49,9 @@ def run_test():
     model.fit(X_train, y_train, constant_optimize=True)
     return model
 
-# Generate training data
-n_samples = 200
-
-X_train = np.linspace(-3, 3, n_samples).reshape(-1, 1)
-y_true_train = generate_complex_function(X_train.flatten())
-y_train = add_noise(y_true_train, noise_level=noise/100).reshape(-1, 1)
-
-# Generate test data (denser for smooth plotting)
-X_test = np.linspace(-3, 3, 300).reshape(-1, 1)
-y_true_test = generate_complex_function(X_test.flatten())
-
-print("Target function: f(x) = 2*sin(x) + 0.5*x²")
-print(f"Training data: {X_train.shape[0]} samples with {noise}% noise")
-
-
-def run_and_score(_):
-    model = run_test()
+def run_and_score(args):
+    _, X_train, y_train, X_test, y_true_test = args
+    model = run_test(X_train, y_train)
     y_pred_train = model.predict(X_train)
     y_pred_test = model.predict(X_test)
     mse_test = np.mean((y_true_test - y_pred_test.flatten()) ** 2)
@@ -70,18 +60,32 @@ def run_and_score(_):
 
     return last_rising, rmse_test
 
-results = []
-with ProcessPoolExecutor() as executor:
-    futures = [executor.submit(run_and_score, i) for i in range(num_tests)]
-    for f in tqdm(as_completed(futures), total=num_tests):
-        results.append(f.result())
+if __name__ == '__main__':
+    # Generate training data
+    n_samples = 200
 
-best_evolutions, scores = zip(*results)
+    X_train = np.linspace(-3, 3, n_samples).reshape(-1, 1)
+    y_true_train = generate_complex_function(X_train.flatten())
+    y_train = add_noise(y_true_train, noise_level=noise/100).reshape(-1, 1)
 
-fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-ax1 = axes[0]
-ax2 = axes[1]
-ax1.hist(best_evolutions)
-ax2.hist(scores)
-plt.show()
-  
+    # Generate test data (denser for smooth plotting)
+    X_test = np.linspace(-3, 3, 300).reshape(-1, 1)
+    y_true_test = generate_complex_function(X_test.flatten())
+
+    print("Target function: f(x) = 2*sin(x) + 0.5*x²")
+    print(f"Training data: {X_train.shape[0]} samples with {noise}% noise")
+
+    results = []
+    with ProcessPoolExecutor() as executor:
+        futures = [executor.submit(run_and_score, (i, X_train, y_train, X_test, y_true_test)) for i in range(num_tests)]
+        for f in tqdm(as_completed(futures), total=num_tests):
+            results.append(f.result())
+
+    best_evolutions, scores = zip(*results)
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    ax1 = axes[0]
+    ax2 = axes[1]
+    ax1.hist(best_evolutions)
+    ax2.hist(scores)
+    plt.show()
