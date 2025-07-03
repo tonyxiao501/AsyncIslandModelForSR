@@ -30,7 +30,7 @@ def main():
   n_samples = 200
   X_train = np.linspace(-3, 3, n_samples).reshape(-1, 1)
   y_true_train = generate_complex_function(X_train.flatten())
-  y_train = add_noise(y_true_train, noise_level=0.1).reshape(-1, 1)
+  y_train = add_noise(y_true_train, noise_level=0.05).reshape(-1, 1)
 
   # Generate test data (denser for smooth plotting)
   X_test = np.linspace(-3, 3, 300).reshape(-1, 1)
