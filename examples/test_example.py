@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
-from symbolic_regression.mimo_regressor import MIMOSymbolicRegressor
+from symbolic_regression.mimo_regressor import EnsembleMIMORegressor  # <-- Use the ensemble version
 
 
 def generate_complex_function(X):
@@ -40,7 +40,10 @@ def main():
   print(f"Training data: {X_train.shape[0]} samples with 5% noise")
   print(f"Test data: {X_test.shape[0]} samples (for plotting)")
 
-  model = MIMOSymbolicRegressor(
+  # Instantiate the ensemble regressor (runs 8 fits in parallel, keeps top 5)
+  model = EnsembleMIMORegressor(
+    n_fits=8,
+    top_n_select=5,
     population_size=150,
     generations=200,
     mutation_rate=0.15,
@@ -54,16 +57,16 @@ def main():
     elite_fraction=0.12
   )
 
-  print("\nTraining symbolic regression model...")
+  print("\nTraining symbolic regression ensemble model...")
   print("Target: 2*sin(x) + 0.5*x²")
   print("This should converge relatively quickly...")
 
-  # Train the model
+  # Train the ensemble model (concurrent fitting)
   model.fit(X_train, y_train, constant_optimize=True)
 
-  # Make predictions
-  y_pred_train = model.predict(X_train)
-  y_pred_test = model.predict(X_test)
+  # Make predictions (using mean of ensemble)
+  y_pred_train = model.predict(X_train, strategy='mean')
+  y_pred_test = model.predict(X_test, strategy='mean')
 
   # Calculate R² scores
   r2_train = r2_score(y_train, y_pred_train)
@@ -74,12 +77,12 @@ def main():
   rmse_test = np.sqrt(mse_test)
   mae_test = np.mean(np.abs(y_true_test - y_pred_test.flatten()))
 
-  # Get discovered expression
+  # Get discovered expressions
   discovered_expressions = model.get_expressions()
   discovered_expr = discovered_expressions[0] if discovered_expressions else "No expression found"
 
   print(f"\n{'=' * 70}")
-  print("SYMBOLIC REGRESSION RESULTS:")
+  print("SYMBOLIC REGRESSION RESULTS (ENSEMBLE):")
   print(f"{'=' * 70}")
   print(f"Target function:      f(x) = 2*sin(x) + 0.5*x²")
   print(f"Discovered function:  f(x) = {discovered_expr}")
@@ -87,11 +90,9 @@ def main():
   print(f"Test R² score:        {r2_test:.6f}")
   print(f"Test RMSE:            {rmse_test:.6f}")
   print(f"Test MAE:             {mae_test:.6f}")
-  if model.best_expressions:
-    print(f"Expression complexity: {model.best_expressions[0].complexity():.2f}")
-    print(f"Expression size:       {model.best_expressions[0].size()} nodes")
-  print(f"Final fitness:        {model.fitness_history[-1]:.6f}")
-  print(f"Generations run:      {len(model.fitness_history)}")
+  print(f"Top ensemble expressions:")
+  for i, expr in enumerate(discovered_expressions):
+      print(f"  {i+1}. {expr}")
 
   # Create comprehensive visualization
   fig, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -106,7 +107,7 @@ def main():
            label='True: 2*sin(x) + 0.5*x²', zorder=3)
   ax1.plot(X_test.flatten(), y_pred_test.flatten(),
            color='red', linewidth=2, linestyle='--',
-           label=f'Discovered: {discovered_expr}', zorder=4)
+           label=f'Discovered (ensemble mean)', zorder=4)
   ax1.set_xlabel('x', fontsize=11)
   ax1.set_ylabel('f(x)', fontsize=11)
   ax1.set_title('Function Comparison', fontsize=12, fontweight='bold')
@@ -119,19 +120,10 @@ def main():
   ax1.text(0.02, 0.98, textstr, transform=ax1.transAxes, fontsize=10,
            verticalalignment='top', bbox=props)
 
-  # Fitness evolution
+  # Fitness evolution (not available for ensemble, so show placeholder)
   ax2 = axes[0, 1]
-  ax2.plot(model.fitness_history, color='green', linewidth=2, label='Best Fitness')
-  if hasattr(model, 'diversity_history') and model.diversity_history:
-    ax2_twin = ax2.twinx()
-    ax2_twin.plot(model.diversity_history, color='orange', linewidth=1, alpha=0.7, label='Diversity')
-    ax2_twin.set_ylabel('Diversity Score', color='orange')
-    ax2_twin.tick_params(axis='y', labelcolor='orange')
-  ax2.set_xlabel('Generation')
-  ax2.set_ylabel('Fitness', color='green')
-  ax2.set_title('Evolution Progress')
-  ax2.grid(True, alpha=0.3)
-  ax2.tick_params(axis='y', labelcolor='green')
+  ax2.set_title('Evolution Progress (see console for details)')
+  ax2.axis('off')
 
   # Residuals plot
   ax3 = axes[1, 0]
@@ -164,19 +156,11 @@ def main():
   plt.tight_layout()
   plt.show()
 
-  # Print detailed analysis
   print(f"\n{'=' * 70}")
-  print("DETAILED ANALYSIS:")
+  print("DETAILED ANALYSIS (ENSEMBLE):")
   print(f"{'=' * 70}")
 
-  if len(model.fitness_history) > 10:
-    improvement = model.fitness_history[0] - model.fitness_history[-1]
-    print(f"\nEvolution Statistics:")
-    print(f"  Initial fitness:     {model.fitness_history[0]:.6f}")
-    print(f"  Final fitness:       {model.fitness_history[-1]:.6f}")
-    print(f"  Total improvement:   {improvement:.6f}")
-    print(f"  Avg improvement/gen: {improvement/len(model.fitness_history):.6f}")
-
+  # You can access more details from model.all_results if needed
 
 if __name__ == "__main__":
   main()
