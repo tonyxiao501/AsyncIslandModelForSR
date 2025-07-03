@@ -89,7 +89,7 @@ class ExpressionGenerator:
 class BiasedExpressionGenerator(ExpressionGenerator):
   """Expression generator with biased operator selection based on diversity needs"""
 
-  def __init__(self, n_inputs: int, max_depth: int = 6, operator_rates: dict = None):
+  def __init__(self, n_inputs: int, max_depth: int = 6, operator_rates: Optional[dict] = None):
     super().__init__(n_inputs, max_depth)
     self.operator_rates = operator_rates or {}
 

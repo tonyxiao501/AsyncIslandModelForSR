@@ -268,14 +268,14 @@ class BinaryOpNode(Node):
   
   def to_sympy(self, c_generator):
     if self.operator == '+':
-      return self.left.to_sympy(c_generator) + self.right.to_sympy(c_generator)
+      return sp.Add(self.left.to_sympy(c_generator), self.right.to_sympy(c_generator))
     elif self.operator == '-':
-      return self.left.to_sympy(c_generator) - self.right.to_sympy(c_generator)
+      return sp.Add(self.left.to_sympy(c_generator), sp.Mul(-1, self.right.to_sympy(c_generator)))
     elif self.operator == '*':
       #return self.left.to_sympy(c_generator) * self.right.to_sympy(c_generator)
       return sp.Mul(self.left.to_sympy(c_generator), self.right.to_sympy(c_generator))
     elif self.operator == '/':
-      return self.left.to_sympy(c_generator) / self.right.to_sympy(c_generator)
+      return sp.Mul(self.left.to_sympy(c_generator), sp.Pow(self.right.to_sympy(c_generator), -1))
     elif self.operator == '^':
       return sp.Pow(self.left.to_sympy(c_generator), self.right.to_sympy(c_generator))
     else:

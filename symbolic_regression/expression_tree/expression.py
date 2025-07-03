@@ -49,7 +49,7 @@ class Expression:
   def get_constants(self) -> tuple:
     const_list = []
     self.root.get_constants(const_list)
-    return const_list
+    return tuple(const_list)
   
   def set_constants(self, constants):
     if len(self.get_constants()) != len(constants):
@@ -61,7 +61,7 @@ class Expression:
 
 # Function: lambda X, *params -> Y
 # Returns None if fails to lambdify or bad operation (x - x) -> 0
-  def vector_lambdify(self) -> Callable:
+  def vector_lambdify(self) -> Optional[Callable]:
     constants = self.get_constants()
     sp_expr = self.to_sympy()
     c_dim = len(constants)

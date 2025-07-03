@@ -91,6 +91,8 @@ class MIMOSymbolicRegressor:
     self.current_crossover_rate = self.crossover_rate
 
     # Generate diverse initial population
+    if self.n_inputs is None:
+        raise ValueError("n_inputs must be set before generating population")
     generator = ExpressionGenerator(self.n_inputs, self.max_depth)
     population = self._generate_diverse_population(generator)
 
@@ -177,6 +179,9 @@ class MIMOSymbolicRegressor:
 
   def _generate_diverse_population(self, generator: ExpressionGenerator) -> List[Expression]:
     """Generate diverse initial population with multiple strategies"""
+    if self.n_inputs is None:
+      raise ValueError("n_inputs must be set before generating population")
+    
     population = []
     strategies = {
       'random_full': 0.4,  # 40% full random trees
@@ -217,6 +222,8 @@ class MIMOSymbolicRegressor:
     """Generate simple function combinations"""
     from .expression_tree.core.node import BinaryOpNode, UnaryOpNode, VariableNode, ConstantNode
 
+    if self.n_inputs is None or self.n_inputs == 0:
+      raise ValueError("n_inputs must be set and greater than 0")
     var_node = VariableNode(random.randint(0, self.n_inputs - 1))
     const_node = ConstantNode(random.uniform(-2, 2))
 
@@ -227,12 +234,16 @@ class MIMOSymbolicRegressor:
       UnaryOpNode('cos', var_node),
       BinaryOpNode('*', var_node, var_node),  # x^2 approximation
     ]
-
+    
     return Expression(random.choice(combinations))
 
   def _generate_constant_heavy(self, generator: ExpressionGenerator) -> Expression:
     """Generate expressions with more constants for fine-tuning"""
     from .expression_tree.core.node import BinaryOpNode, VariableNode, ConstantNode
+
+    if self.n_inputs is None or self.n_inputs == 0:
+      raise ValueError("n_inputs must be set and greater than 0")
+    var_node = VariableNode(random.randint(0, self.n_inputs - 1))
 
     var_node = VariableNode(random.randint(0, self.n_inputs - 1))
     const1 = ConstantNode(random.uniform(-3, 3))
@@ -248,11 +259,13 @@ class MIMOSymbolicRegressor:
         return False
 
       # Test evaluation on small array
+      if self.n_inputs is None:
+        return False
       test_X = np.random.randn(5, self.n_inputs)
       result = expr.evaluate(test_X)
 
-      return (np.all(np.isfinite(result)) and
-              np.max(np.abs(result)) < 1e10)
+      return bool(np.all(np.isfinite(result)) and
+                  np.max(np.abs(result)) < 1e10)
     except:
       return False
 
@@ -321,7 +334,7 @@ class MIMOSymbolicRegressor:
     # Complexity diversity
     complexities = [expr.complexity() for expr in population]
     complexity_std = np.std(complexities) / (np.mean(complexities) + 1e-6)
-    complexity_diversity = min(1.0, complexity_std)
+    complexity_diversity = min(1.0, float(complexity_std))
 
     # Size diversity
     sizes = [expr.size() for expr in population]
@@ -390,6 +403,8 @@ class MIMOSymbolicRegressor:
     new_population = elites.copy()
 
     # Create variants of elites with different mutation strengths
+    if self.n_inputs is None:
+      raise ValueError("n_inputs must be set before creating genetic operations")
     genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25)
     for elite in elites:
       # High mutation variants
@@ -445,7 +460,8 @@ class MIMOSymbolicRegressor:
 
     if total_weight > 0:
       weights = [w / total_weight for w in weights]
-      return np.random.choice(population, p=weights)
+      chosen_index = np.random.choice(len(population), p=weights)
+      return population[chosen_index]
     else:
       return random.choice(population)
 
@@ -553,7 +569,7 @@ class MIMOSymbolicRegressor:
   def _to_sympy_expression(self, expr_string: str) -> Optional[str]:
     """Convert expression to SymPy and simplify"""
     try:
-      if self.advanced_simplify and hasattr(self, 'sympy_simplifier'):
+      if self.advanced_simplify and hasattr(self, 'sympy_simplifier') and self.n_inputs is not None:
         result = self.sympy_simplifier.simplify_expression(expr_string, self.n_inputs)
         return result.get('simplified', expr_string)
       else:
@@ -650,7 +666,7 @@ class MIMOSymbolicRegressor:
       self._generate_mixed_expression
     ]
 
-    strategy = np.random.choice(strategies)
+    strategy = random.choice(strategies)
     return strategy(generator)
 
   def _generate_transcendental_expression(self, generator: ExpressionGenerator) -> Expression:
@@ -739,6 +755,9 @@ class MIMOSymbolicRegressor:
   def _generate_complex_diverse_expression(self, generator: ExpressionGenerator) -> Expression:
     """Generate more complex diverse expressions"""
     from .expression_tree.core.node import BinaryOpNode, UnaryOpNode, VariableNode, ConstantNode
+
+    if self.n_inputs is None or self.n_inputs == 0:
+      raise ValueError("n_inputs must be set and greater than 0")
 
     scientific_constants = {
       'pi': constants.pi,
@@ -858,10 +877,13 @@ class MIMOSymbolicRegressor:
           new_population.append(child2)
       else:
         # Generate new diverse individual or mutate existing
-        if random.random() < 0.3:  # 30% chance for completely new diverse individual
-          diverse_expr = self._generate_high_diversity_expression(
-            ExpressionGenerator(self.n_inputs, self.max_depth)
-          )
+        if random.random() < 0.3:  # 30% chance for completely new diverse individua
+          if self.n_inputs is not None:
+            diverse_expr = self._generate_high_diversity_expression(
+              ExpressionGenerator(self.n_inputs, self.max_depth)
+            )
+          else:
+            continue
           if self._is_expression_valid(diverse_expr):
             new_population.append(diverse_expr)
         else:
