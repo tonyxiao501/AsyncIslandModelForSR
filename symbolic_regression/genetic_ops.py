@@ -286,3 +286,30 @@ class GeneticOperations:
     size_diff = abs(expr1.complexity() - expr2.complexity())
     string_diff = len(set(expr1.to_string()) ^ set(expr2.to_string()))
     return size_diff + string_diff * 0.1
+
+  def _evaluate_fitness(self, expr: Expression, X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None, parsimony_coefficient: float = 0.001) -> float:
+    """
+    Evaluate the fitness of a single expression.
+    If X and y are not provided, returns a large negative value.
+    """
+    if X is None or y is None:
+      return -1e8
+
+    try:
+      predictions = expr.evaluate(X)
+      if predictions.ndim == 1:
+        predictions = predictions.reshape(-1, 1)
+      mse = np.mean((y - predictions) ** 2)
+      complexity_penalty = parsimony_coefficient * expr.complexity()
+      stability_penalty = 0.0
+      max_abs_pred = np.max(np.abs(predictions))
+      if max_abs_pred > 1e6:
+        stability_penalty = 0.5
+      elif max_abs_pred > 1e4:
+        stability_penalty = 0.1
+      if np.any(~np.isfinite(predictions)):
+        stability_penalty += 1.0
+      fitness = -mse - complexity_penalty - stability_penalty
+      return float(fitness)
+    except Exception:
+      return -1e8

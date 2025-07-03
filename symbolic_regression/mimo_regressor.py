@@ -176,7 +176,8 @@ class MIMOSymbolicRegressor:
             new_population = enhanced_reproduction_v2(
                 population, fitness_scores, genetic_ops, diversity_score, generation,
                 self.population_size, self.elite_fraction, self.current_crossover_rate, self.current_mutation_rate,
-                self.n_inputs, self.max_depth, lambda expr: is_expression_valid(expr, self.n_inputs), generate_high_diversity_expression
+                self.n_inputs, self.max_depth, lambda expr: is_expression_valid(expr, self.n_inputs), generate_high_diversity_expression,
+                X, y
             )
 
             population = new_population

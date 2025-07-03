@@ -149,8 +149,7 @@ def generate_mixed_expression(generator):
     linear_part = BinaryOpNode('*', const1, var)
     return Expression(BinaryOpNode('+', trig_part, linear_part))
 
-def enhanced_reproduction_v2(population, fitness_scores, genetic_ops, diversity_score, generation, population_size, elite_fraction, current_crossover_rate, current_mutation_rate, n_inputs, max_depth, is_expression_valid, generate_high_diversity_expression):
-    """Enhanced reproduction strategy with diversity considerations"""
+def enhanced_reproduction_v2(population, fitness_scores, genetic_ops, diversity_score, generation, population_size, elite_fraction, current_crossover_rate, current_mutation_rate, n_inputs, max_depth, is_expression_valid, generate_high_diversity_expression, X, y):
     import numpy as np
     import random
     from symbolic_regression.generator import ExpressionGenerator
@@ -159,6 +158,8 @@ def enhanced_reproduction_v2(population, fitness_scores, genetic_ops, diversity_
     elite_indices = np.argsort(fitness_scores)[-elite_count:]
     elites = [population[i].copy() for i in elite_indices]
     new_population.extend(elites)
+    temperature = 1.0
+    cooling_rate = 0.97
     while len(new_population) < population_size:
         if random.random() < current_crossover_rate and len(new_population) < population_size - 1:
             parent1 = random.choice(population)
@@ -168,21 +169,49 @@ def enhanced_reproduction_v2(population, fitness_scores, genetic_ops, diversity_
                 child1 = genetic_ops.mutate(child1, current_mutation_rate)
             if random.random() < current_mutation_rate:
                 child2 = genetic_ops.mutate(child2, current_mutation_rate)
-            if is_expression_valid(child1):
-                new_population.append(child1)
-            if is_expression_valid(child2) and len(new_population) < population_size:
-                new_population.append(child2)
+            for child in [child1, child2]:
+                if is_expression_valid(child):
+                    idx = random.randint(0, len(population) - 1)
+                    current_fitness = fitness_scores[idx]
+                    new_fitness = genetic_ops._evaluate_fitness(child, X, y)
+                    delta = new_fitness - current_fitness
+                    T = max(temperature * (cooling_rate ** generation), 1e-8)
+                    exponent = np.clip(delta / T, -500, 500)
+                    accept_prob = np.exp(exponent)
+                    if delta > 0 or np.random.rand() < accept_prob:
+                        new_population.append(child)
+                    if len(new_population) >= population_size:
+                        break
         else:
             if random.random() < 0.3:
                 generator = ExpressionGenerator(n_inputs, max_depth)
                 diverse_expr = generate_high_diversity_expression(generator)
                 if is_expression_valid(diverse_expr):
-                    new_population.append(diverse_expr)
+                    idx = random.randint(0, len(population) - 1)
+                    current_fitness = fitness_scores[idx]
+                    new_fitness = genetic_ops._evaluate_fitness(diverse_expr, X, y)
+                    delta = new_fitness - current_fitness
+                    T = max(temperature * (cooling_rate ** generation), 1e-8)
+                    exponent = np.clip(delta / T, -500, 500)
+                    accept_prob = np.exp(exponent)
+                    if delta > 0 or np.random.rand() < accept_prob:
+                        new_population.append(diverse_expr)
             else:
                 parent = random.choice(population)
                 child = genetic_ops.mutate(parent, current_mutation_rate)
                 if is_expression_valid(child):
-                    new_population.append(child)
+                    idx = random.randint(0, len(population) - 1)
+                    current_fitness = fitness_scores[idx]
+                    if hasattr(genetic_ops, "_evaluate_fitness"):
+                        new_fitness = genetic_ops._evaluate_fitness(child, X, y)
+                    else:
+                        new_fitness = current_fitness
+                    delta = new_fitness - current_fitness
+                    T = max(temperature * (cooling_rate ** generation), 1e-8)
+                    exponent = np.clip(delta / T, -500, 500)
+                    accept_prob = np.exp(exponent)
+                    if delta > 0 or np.random.rand() < accept_prob:
+                        new_population.append(child)
     return new_population[:population_size]
 
 def generate_simple_combination(generator, n_inputs):
