@@ -18,7 +18,12 @@ from .population import (
 )
 from .utils import string_similarity, calculate_expression_uniqueness, calculate_population_diversity
 from .ensemble_worker import _fit_worker
-
+from .adaptive_evolution import (
+    update_adaptive_parameters, restart_population_enhanced, should_optimize_constants_enhanced
+)
+from .selection import enhanced_selection, diversity_selection, tournament_selection
+from .expression_utils import to_sympy_expression, optimize_constants, should_optimize_constants
+from .evolution_stats import get_evolution_stats, get_detailed_expressions
 
 class MIMOSymbolicRegressor:
   """Enhanced Multiple Input Multiple Output Symbolic Regression Model with improved evolution dynamics"""
@@ -111,7 +116,6 @@ class MIMOSymbolicRegressor:
 
     for generation in range(self.generations):
       # Evaluate fitness with enhanced scoring
-
       fitness_scores = evaluate_population_enhanced(population, X, y, self.parsimony_coefficient)
 
       # Calculate diversity metrics
@@ -148,13 +152,17 @@ class MIMOSymbolicRegressor:
 
       # Adaptive parameter adjustment
       if self.adaptive_rates:
-        self._update_adaptive_parameters(generation, diversity_score, plateau_counter)
+        self.current_mutation_rate, self.current_crossover_rate = update_adaptive_parameters(
+          self, generation, diversity_score, plateau_counter,
+          self.diversity_threshold, self.mutation_rate, self.crossover_rate,
+          self.current_mutation_rate, self.current_crossover_rate, self.stagnation_counter
+        )
 
       # Handle long-term stagnation with population restart
       if self.stagnation_counter >= self.restart_threshold:
         if self.console_log:
           print(f"Population restart at generation {generation} (stagnation: {self.stagnation_counter})")
-        population = self._restart_population_enhanced(population, fitness_scores, generator)
+        population = restart_population_enhanced(population, fitness_scores, generator, self.population_size, self.n_inputs)
         self.stagnation_counter = 0
         plateau_counter = 0
         continue
@@ -184,7 +192,7 @@ class MIMOSymbolicRegressor:
 
       # Constant Optimize
       if constant_optimize:
-        self._optimize_constants(X.squeeze(), y, population, generation - last_update)
+        optimize_constants(X.squeeze(), y, population, generation - last_update, self.population_size, self.generations)
 
     # Final reporting
     final_best = max(self.fitness_history) if self.fitness_history else -np.inf
@@ -194,128 +202,6 @@ class MIMOSymbolicRegressor:
       if self.best_expressions:
         print(f"Best expression: {self.best_expressions[0].to_string()}")
         print(f"Expression complexity: {self.best_expressions[0].complexity():.2f}")
-
-  def _update_adaptive_parameters(self, generation: int, diversity_score: float, plateau_counter: int):
-    """Enhanced adaptive parameter updates"""
-    # Base adaptation based on diversity and stagnation
-    if diversity_score < self.diversity_threshold:
-      # Low diversity - increase exploration
-      mutation_multiplier = 1.0 + (self.diversity_threshold - diversity_score) * 2.0
-      crossover_multiplier = 0.9
-    else:
-      # Good diversity - normal rates
-      mutation_multiplier = 1.0
-      crossover_multiplier = 1.0
-
-    # Additional adaptation based on plateau
-    if plateau_counter > 15:
-      mutation_multiplier *= 1.5
-      crossover_multiplier *= 0.8
-    elif plateau_counter > 10:
-      mutation_multiplier *= 1.2
-
-    # Apply multipliers with bounds
-    self.current_mutation_rate = np.clip(
-      self.mutation_rate * mutation_multiplier, 0.05, 0.5)
-    self.current_crossover_rate = np.clip(
-      self.crossover_rate * crossover_multiplier, 0.5, 0.95)
-
-    # Gradually return to original rates when performing well
-    if self.stagnation_counter < 5 and plateau_counter < 5:
-      self.current_mutation_rate = (self.current_mutation_rate * 0.95 +
-                                    self.mutation_rate * 0.05)
-      self.current_crossover_rate = (self.current_crossover_rate * 0.95 +
-                                     self.crossover_rate * 0.05)
-
-  def _restart_population_enhanced(self, population: List[Expression],
-                                   fitness_scores: List[float],
-                                   generator: ExpressionGenerator) -> List[Expression]:
-    """Enhanced population restart with better elite preservation"""
-    # Keep top performers (more aggressive selection)
-    elite_count = max(2, int(self.population_size * 0.05))  # Keep top 5%
-    elite_indices = np.argsort(fitness_scores)[-elite_count:]
-    elites = [population[i].copy() for i in elite_indices]
-
-    new_population = elites.copy()
-
-    # Create variants of elites with different mutation strengths
-    if self.n_inputs is None:
-      raise ValueError("n_inputs must be set before creating genetic operations")
-    genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25)
-    for elite in elites:
-      # High mutation variants
-      for _ in range(2):
-        mutated = genetic_ops.mutate(elite, 0.4)
-        if self._is_expression_valid(mutated):
-          new_population.append(mutated)
-
-      # Medium mutation variants
-      for _ in range(2):
-        mutated = genetic_ops.mutate(elite, 0.2)
-        if self._is_expression_valid(mutated):
-          new_population.append(mutated)
-
-    # Fill rest with completely new diverse individuals
-    while len(new_population) < self.population_size:
-      new_expr = Expression(generator.generate_random_expression())
-      if self._is_expression_valid(new_expr):
-        new_population.append(new_expr)
-
-    return new_population[:self.population_size]
-
-  def _enhanced_selection(self, population: List[Expression], fitness_scores: List[float],
-                          diversity_score: float) -> Expression:
-    """Enhanced selection balancing fitness and diversity"""
-
-    # Adaptive selection pressure
-    if diversity_score > self.diversity_threshold:
-      # Good diversity - focus more on fitness
-      if random.random() < 0.85:
-        return self._tournament_selection(population, fitness_scores)
-      else:
-        return self._diversity_selection(population)
-    else:
-      # Low diversity - balance fitness and diversity
-      if random.random() < 0.6:
-        return self._tournament_selection(population, fitness_scores)
-      else:
-        return self._diversity_selection(population)
-
-  def _diversity_selection(self, population: List[Expression]) -> Expression:
-    """Select based on diversity (less common expressions)"""
-    # Simple diversity selection - prefer less common expressions
-    strings = [expr.to_string() for expr in population]
-    string_counts = {}
-    for s in strings:
-      string_counts[s] = string_counts.get(s, 0) + 1
-
-    # Weight selection inversely by frequency
-    weights = [1.0 / string_counts[expr.to_string()] for expr in population]
-    total_weight = sum(weights)
-
-    if total_weight > 0:
-      weights = [w / total_weight for w in weights]
-      chosen_index = np.random.choice(len(population), p=weights)
-      return population[chosen_index]
-    else:
-      return random.choice(population)
-
-  def _tournament_selection(self, population: List[Expression], fitness_scores: List[float]) -> Expression:
-    """Enhanced tournament selection with adaptive tournament size"""
-    # Adaptive tournament size based on stagnation
-    base_tournament_size = self.tournament_size
-    if self.stagnation_counter > 15:
-      tournament_size = max(2, base_tournament_size - 1)  # Smaller tournaments for more diversity
-    elif self.stagnation_counter > 8:
-      tournament_size = base_tournament_size
-    else:
-      tournament_size = min(len(population), base_tournament_size + 1)  # Larger tournaments for better selection
-
-    tournament_indices = random.sample(range(len(population)),
-                                       min(tournament_size, len(population)))
-    tournament_fitness = [fitness_scores[i] for i in tournament_indices]
-    winner_idx = tournament_indices[np.argmax(tournament_fitness)]
-    return population[winner_idx]
 
   def predict(self, X: np.ndarray) -> np.ndarray:
     """Make predictions using the best expressions"""
@@ -365,7 +251,7 @@ class MIMOSymbolicRegressor:
     for expr in self.best_expressions:
       expr_str = expr.to_string()
       if self.sympy_simplify:
-        simplified = self._to_sympy_expression(expr_str)
+        simplified = to_sympy_expression(expr_str, self.advanced_simplify, self.n_inputs)
         expressions.append(simplified if simplified else expr_str)
       else:
         expressions.append(expr_str)
@@ -381,106 +267,11 @@ class MIMOSymbolicRegressor:
 
   def get_detailed_expressions(self) -> List[Dict]:
     """Get detailed information about expressions"""
-    if not self.best_expressions:
-      return []
-
-    detailed = []
-    for i, expr in enumerate(self.best_expressions):
-      info = {
-        'expression': expr.to_string(),
-        'complexity': expr.complexity(),
-        'size': expr.size(),
-        'simplified': None,
-        'output_index': i
-      }
-
-      if self.sympy_simplify:
-        info['simplified'] = self._to_sympy_expression(expr.to_string())
-
-      detailed.append(info)
-
-    return detailed
-
-  def _to_sympy_expression(self, expr_string: str) -> Optional[str]:
-    """Convert expression to SymPy and simplify"""
-    try:
-      if self.advanced_simplify and hasattr(self, 'sympy_simplifier') and self.n_inputs is not None:
-        result = self.sympy_simplifier.simplify_expression(expr_string, self.n_inputs)
-        return result.get('simplified', expr_string)
-      else:
-        # Basic SymPy simplification
-        sympy_expr = sp.sympify(expr_string.replace('X', 'x'))
-        simplified = sp.simplify(sympy_expr)
-        return str(simplified).replace('x', 'X')
-    except Exception:
-      return expr_string
+    return get_detailed_expressions(self.best_expressions, self.sympy_simplify)
 
   def get_evolution_stats(self) -> Dict[str, Any]:
     """Get detailed evolution statistics"""
-    return {
-      'fitness_history': self.fitness_history.copy(),
-      'best_fitness_history': self.best_fitness_history.copy(),
-      'diversity_history': self.diversity_history.copy(),
-      'final_mutation_rate': self.current_mutation_rate,
-      'final_crossover_rate': self.current_crossover_rate,
-      'total_stagnation': self.stagnation_counter,
-      'total_generations': len(self.fitness_history)
-    }
-
-  def _optimize_constants(self, X, y, popolation: List[Expression], steps_unchanged):
-    for expr in popolation:
-      if not self._should_optimize_constants(steps_unchanged):
-        continue
-      expr_vec = expr.vector_lambdify()
-      if expr_vec is not None:
-        try:
-          with warnings.catch_warnings():
-            warnings.simplefilter("error", OptimizeWarning)
-            popt, pcov = curve_fit(expr_vec, X, y, expr.get_constants())
-            expr.set_constants(popt)
-        except OptimizeWarning:
-          pass  # failed to optimize
-
-  def _should_optimize_constants(self, steps_unchanged):
-    p = 1 / (1 + self.population_size * np.exp(-5 * steps_unchanged / self.generations))
-    if np.random.rand() < p:
-      return True
-    else:
-      return False
-
-  def _should_optimize_constants_enhanced(self, expr_index: int, population_size: int,
-                                          steps_unchanged: int, generation: int) -> bool:
-    """Enhanced logic for when to optimize constants"""
-
-    if expr_index < population_size * 0.1:  # Top 10%
-      return True
-
-    if steps_unchanged > 5:
-      base_prob = min(0.3, steps_unchanged / 20)
-      rank_factor = 1.0 - (expr_index / population_size)
-      prob = base_prob * (1 + rank_factor)
-      return np.random.rand() < prob
-
-    if generation % 20 == 0 and expr_index < population_size * 0.3:
-      return True
-
-    return False
-
-  def _generate_diverse_population(self, generator):
-    return generate_diverse_population(generator, self.n_inputs, self.population_size, self.max_depth, lambda expr: is_expression_valid(expr, self.n_inputs))
-
-  def _inject_diversity(self, population, fitness_scores, generator, injection_rate=0.3):
-    return inject_diversity(
-      population, fitness_scores, generator, injection_rate,
-      lambda expr: is_expression_valid(expr, self.n_inputs),
-      generate_high_diversity_expression,
-      generate_targeted_diverse_expression,
-      generate_complex_diverse_expression,
-      self.stagnation_counter, self.console_log
+    return get_evolution_stats(
+      self.fitness_history, self.best_fitness_history, self.diversity_history,
+      self.current_mutation_rate, self.current_crossover_rate, self.stagnation_counter
     )
-
-  def _is_expression_valid(self, expr):
-    return is_expression_valid(expr, self.n_inputs)
-
-  def _string_similarity(self, s1, s2):
-    return string_similarity(s1, s2)
