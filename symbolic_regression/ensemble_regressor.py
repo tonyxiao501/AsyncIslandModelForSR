@@ -1,22 +1,7 @@
 import numpy as np
-from scipy.constants import golden_ratio, electron_mass, neutron_mass
-from scipy.optimize import OptimizeWarning, curve_fit
-import warnings
-import random
-from typing import List, Optional, Dict, Any
-import sympy as sp
+from typing import List, Dict
 from .expression_tree import Expression
-from .expression_tree.core.node import Node, ConstantNode
-from .generator import ExpressionGenerator, BiasedExpressionGenerator
-from .genetic_ops import GeneticOperations
-from .expression_tree.utils.sympy_utils import SymPySimplifier
-import scipy.constants as constants
 import multiprocessing
-from .population import (
-  generate_diverse_population, inject_diversity, is_expression_valid,
-  generate_high_diversity_expression, generate_targeted_diverse_expression, generate_complex_diverse_expression, enhanced_reproduction_v2
-)
-from .utils import string_similarity
 from .ensemble_worker import _fit_worker
 
 class EnsembleMIMORegressor:

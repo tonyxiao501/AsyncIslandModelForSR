@@ -1,28 +1,18 @@
 import numpy as np
-from scipy.constants import golden_ratio, electron_mass, neutron_mass
-from scipy.optimize import OptimizeWarning, curve_fit
-import warnings
-import random
 from typing import List, Optional, Dict, Any
-import sympy as sp
 from .expression_tree import Expression
-from .expression_tree.core.node import Node, ConstantNode
-from .generator import ExpressionGenerator, BiasedExpressionGenerator
+from .generator import ExpressionGenerator
 from .genetic_ops import GeneticOperations
 from .expression_tree.utils.sympy_utils import SymPySimplifier
-import scipy.constants as constants
-import multiprocessing
 from .population import (
   generate_diverse_population, inject_diversity, is_expression_valid,
   generate_high_diversity_expression, generate_targeted_diverse_expression, generate_complex_diverse_expression, enhanced_reproduction_v2, evaluate_population_enhanced
 )
-from .utils import string_similarity, calculate_expression_uniqueness, calculate_population_diversity
-from .ensemble_worker import _fit_worker
+from .utils import calculate_population_diversity
 from .adaptive_evolution import (
-    update_adaptive_parameters, restart_population_enhanced, should_optimize_constants_enhanced
+    update_adaptive_parameters, restart_population_enhanced
 )
-from .selection import enhanced_selection, diversity_selection, tournament_selection
-from .expression_utils import to_sympy_expression, optimize_constants, should_optimize_constants
+from .expression_utils import to_sympy_expression, optimize_constants
 from .evolution_stats import get_evolution_stats, get_detailed_expressions
 
 class MIMOSymbolicRegressor:

@@ -4,8 +4,7 @@ from typing import List
 import numpy as np
 
 from symbolic_regression import Expression
-
-from utils import calculate_population_diversity, calculate_expression_uniqueness
+from utils import calculate_expression_uniqueness
 
 
 def generate_diverse_population(generator, n_inputs, population_size, max_depth, is_expression_valid):
@@ -101,7 +100,6 @@ def generate_high_diversity_expression(generator):
   from symbolic_regression.expression_tree import Expression
   from symbolic_regression.expression_tree.core.node import BinaryOpNode, UnaryOpNode, VariableNode, ConstantNode
   import numpy as np
-  import random
   var = VariableNode(0)
   const1 = ConstantNode(np.random.uniform(-2, 2))
   const2 = ConstantNode(np.random.uniform(-2, 2))
