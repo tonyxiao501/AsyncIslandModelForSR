@@ -14,9 +14,9 @@ import scipy.constants as constants
 import multiprocessing
 from .population import (
   generate_diverse_population, inject_diversity, is_expression_valid,
-  generate_high_diversity_expression, generate_targeted_diverse_expression, generate_complex_diverse_expression, enhanced_reproduction_v2
+  generate_high_diversity_expression, generate_targeted_diverse_expression, generate_complex_diverse_expression, enhanced_reproduction_v2, evaluate_population_enhanced
 )
-from .utils import string_similarity
+from .utils import string_similarity, calculate_expression_uniqueness, calculate_population_diversity
 from .ensemble_worker import _fit_worker
 
 
@@ -112,10 +112,10 @@ class MIMOSymbolicRegressor:
     for generation in range(self.generations):
       # Evaluate fitness with enhanced scoring
 
-      fitness_scores = self._evaluate_population_enhanced(population, X, y)
+      fitness_scores = evaluate_population_enhanced(population, X, y, self.parsimony_coefficient)
 
       # Calculate diversity metrics
-      diversity_score = self._calculate_population_diversity(population)
+      diversity_score = calculate_population_diversity(population)
       self.diversity_history.append(diversity_score)
       self.generation_diversity_scores.append(diversity_score)
 
@@ -194,80 +194,6 @@ class MIMOSymbolicRegressor:
       if self.best_expressions:
         print(f"Best expression: {self.best_expressions[0].to_string()}")
         print(f"Expression complexity: {self.best_expressions[0].complexity():.2f}")
-
-  def _evaluate_population_enhanced(self, population: List[Expression],
-                                    X: np.ndarray, y: np.ndarray) -> List[float]:
-    """Enhanced fitness evaluation with multiple objectives"""
-    fitness_scores = []
-
-    for expr in population:
-      try:
-        predictions = expr.evaluate(X)
-        if predictions.ndim == 1:
-          predictions = predictions.reshape(-1, 1)
-
-        # Multi-objective fitness
-        mse = np.mean((y - predictions) ** 2)
-
-        # Complexity penalty (adjustable)
-        complexity_penalty = self.parsimony_coefficient * expr.complexity()
-
-        # Stability penalty for extreme values
-        stability_penalty = 0.0
-        max_abs_pred = np.max(np.abs(predictions))
-        if max_abs_pred > 1e6:
-          stability_penalty = 0.5
-        elif max_abs_pred > 1e4:
-          stability_penalty = 0.1
-
-        # Numerical stability penalty
-        if np.any(~np.isfinite(predictions)):
-          stability_penalty += 1.0
-
-        # Diversity bonus (small)
-        diversity_bonus = self._calculate_expression_uniqueness(expr, population) * 0.001
-
-        fitness = -mse - complexity_penalty - stability_penalty + diversity_bonus
-        fitness_scores.append(float(fitness))
-
-      except Exception:
-        fitness_scores.append(-1e8)  # Severe penalty for failed evaluation
-
-    return fitness_scores
-
-  def _calculate_expression_uniqueness(self, expr: Expression, population: List[Expression]) -> float:
-    """Calculate how unique an expression is compared to population"""
-    expr_string = expr.to_string()
-    unique_score = 0.0
-
-    for other in population:
-      if expr is not other:
-        similarity = string_similarity(expr_string, other.to_string())
-        unique_score += (1.0 - similarity)
-
-    return unique_score / max(1, len(population) - 1)
-
-  def _calculate_population_diversity(self, population: List[Expression]) -> float:
-    """Calculate population diversity using multiple metrics"""
-    if len(population) < 2:
-      return 1.0
-
-    # String-based diversity
-    strings = [expr.to_string() for expr in population]
-    unique_strings = len(set(strings))
-    string_diversity = unique_strings / len(population)
-
-    # Complexity diversity
-    complexities = [expr.complexity() for expr in population]
-    complexity_std = np.std(complexities) / (np.mean(complexities) + 1e-6)
-    complexity_diversity = min(1.0, float(complexity_std))
-
-    # Size diversity
-    sizes = [expr.size() for expr in population]
-    size_diversity = len(set(sizes)) / len(population)
-
-    # Combined diversity score
-    return (string_diversity * 0.5 + complexity_diversity * 0.3 + size_diversity * 0.2)
 
   def _update_adaptive_parameters(self, generation: int, diversity_score: float, plateau_counter: int):
     """Enhanced adaptive parameter updates"""

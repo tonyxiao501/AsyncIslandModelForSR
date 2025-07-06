@@ -1,4 +1,12 @@
 # population.py: population/diversity management helpers
+from typing import List
+
+import numpy as np
+
+from symbolic_regression import Expression
+
+from utils import calculate_population_diversity, calculate_expression_uniqueness
+
 
 def generate_diverse_population(generator, n_inputs, population_size, max_depth, is_expression_valid):
   """Generate diverse initial population with multiple strategies"""
@@ -242,3 +250,38 @@ def generate_constant_heavy(generator, n_inputs):
   const2 = ConstantNode(random.uniform(-3, 3))
   op = random.choice(['+', '-', '*'])
   return Expression(BinaryOpNode(op, BinaryOpNode('*', const1, var_node), const2))
+
+def evaluate_population_enhanced(population: List[Expression],
+                                    X: np.ndarray, y: np.ndarray, parsimony_coefficient) -> List[float]:
+  """Enhanced fitness evaluation with multiple objectives"""
+  fitness_scores = []
+
+  for expr in population:
+    try:
+      predictions = expr.evaluate(X)
+      if predictions.ndim == 1:
+        predictions = predictions.reshape(-1, 1)
+
+      mse = np.mean((y - predictions) ** 2)
+
+      complexity_penalty = parsimony_coefficient * expr.complexity()
+
+      stability_penalty = 0.0
+      max_abs_pred = np.max(np.abs(predictions))
+      if max_abs_pred > 1e6:
+        stability_penalty = 0.5
+      elif max_abs_pred > 1e4:
+        stability_penalty = 0.1
+
+      if np.any(~np.isfinite(predictions)):
+        stability_penalty += 1.0
+
+      diversity_bonus = calculate_expression_uniqueness(expr, population) * 0.001
+
+      fitness = -mse - complexity_penalty - stability_penalty + diversity_bonus
+      fitness_scores.append(float(fitness))
+
+    except Exception:
+      fitness_scores.append(-1e8)  # Severe penalty for failed evaluation
+
+  return fitness_scores
