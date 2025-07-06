@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
-from symbolic_regression.mimo_regressor import EnsembleMIMORegressor  # <-- Use the ensemble version
+from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- Use the ensemble version
 
 
 def generate_complex_function(X):
