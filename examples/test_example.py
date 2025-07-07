@@ -13,7 +13,7 @@ from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- 
 
 def generate_complex_function(X):
   """Generate a complex 1-input, 1-output function"""
-  return 2 * np.sin(X) + 0.5 * X ** 2
+  return 2 * np.sin(X) + 0.5 * X ** 2 + np.sqrt(np.abs(X))
 
 
 def add_noise(y, noise_level=0.05):

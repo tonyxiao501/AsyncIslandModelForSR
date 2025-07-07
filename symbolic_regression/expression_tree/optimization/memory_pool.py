@@ -1,4 +1,5 @@
 from typing import List, TYPE_CHECKING, Optional
+import threading
 
 if TYPE_CHECKING:
   from ..core.node import Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
@@ -90,17 +91,29 @@ class NodePool:
     self.unary_pool.clear()
 
 
-# Global instance - lazy initialization
+# Global instance - process-local initialization
 _GLOBAL_POOL: Optional[NodePool] = None
+_POOL_LOCK = threading.Lock()
 
 
 def get_global_pool() -> NodePool:
   global _GLOBAL_POOL
   if _GLOBAL_POOL is None:
-    _GLOBAL_POOL = NodePool()
+    with _POOL_LOCK:
+      if _GLOBAL_POOL is None:  # Double-check locking
+        _GLOBAL_POOL = NodePool()
   return _GLOBAL_POOL
 
 
 def clear_global_pool():
+  global _GLOBAL_POOL
+  with _POOL_LOCK:
+    if _GLOBAL_POOL is not None:
+      _GLOBAL_POOL.clear()
+    _GLOBAL_POOL = None
+
+
+def reset_global_pool():
+  """Reset the global pool - useful for multiprocessing"""
   global _GLOBAL_POOL
   _GLOBAL_POOL = None
