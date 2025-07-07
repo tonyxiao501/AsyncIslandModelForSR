@@ -12,6 +12,7 @@ from .expression_tree import (
 from .generator import ExpressionGenerator, BiasedExpressionGenerator
 from .genetic_ops import GeneticOperations
 from .mimo_regressor import MIMOSymbolicRegressor
+from .ensemble_regressor import EnsembleMIMORegressor
 from .population import (
     generate_diverse_population, inject_diversity, is_expression_valid,
     generate_high_diversity_expression, generate_targeted_diverse_expression,
@@ -32,7 +33,7 @@ __all__ = [
     "Expression", "Node", "VariableNode", "ConstantNode",
     "BinaryOpNode", "UnaryOpNode",
     "ExpressionGenerator", "BiasedExpressionGenerator",
-    "GeneticOperations", "MIMOSymbolicRegressor",
+    "GeneticOperations", "MIMOSymbolicRegressor", "EnsembleMIMORegressor",
     "generate_diverse_population", "inject_diversity", "is_expression_valid",
     "generate_high_diversity_expression", "generate_targeted_diverse_expression",
     "generate_complex_diverse_expression", "enhanced_reproduction_v2",

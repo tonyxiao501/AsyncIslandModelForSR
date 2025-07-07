@@ -34,6 +34,8 @@ pip install -r requirements.txt
 
 ## Quick Start
 
+### Basic Usage
+
 ```python
 import numpy as np
 from symbolic_regression import MIMOSymbolicRegressor
@@ -57,253 +59,165 @@ regressor.fit(X, y)
 # Make predictions
 predictions = regressor.predict(X)
 
-# Get the discovered expressions
-expressions = regressor.get_expressions()
-print(f"Best expression: {expressions[0]}")
+# Get the best expression
+best_expr = regressor.get_best_expression()
+print(f"Best expression: {best_expr.to_string()}")
+```
 
-# Calculate R² score
-score = regressor.score(X, y)
-print(f"R² Score: {score:.4f}")
+### Ensemble Modeling
+
+```python
+from symbolic_regression import EnsembleMIMORegressor
+
+# Create ensemble regressor
+ensemble = EnsembleMIMORegressor(
+    n_fits=8,           # Number of concurrent fits
+    top_n_select=5,     # Number of best expressions to select
+    population_size=100,
+    generations=50
+)
+
+# Fit the ensemble (use within if __name__ == "__main__": block)
+if __name__ == "__main__":
+    ensemble.fit(X, y)
+    
+    # Get ensemble predictions
+    predictions = ensemble.predict(X)
+    
+    # Get best expressions from ensemble
+    best_expressions = ensemble.get_best_expressions()
 ```
 
 ---
 
-## Module Architecture
+## Module Structure
 
 The package is organized into several modular components:
 
 ### Core Components
 
-#### `expression_tree/`
-- **`expression.py`**: Main Expression class for tree manipulation
-- **`core/`**: Core node types and operators
-  - `node.py`: Base node classes (VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode)
-  - `operators.py`: Operator definitions and evaluation functions
-- **`optimization/`**: Performance optimization utilities
-  - `memory_pool.py`: Memory pool for efficient expression evaluation
-- **`utils/`**: Expression utilities
-  - `simplifier.py`: Expression simplification algorithms
-  - `sympy_utils.py`: SymPy integration for advanced simplification
-  - `validator.py`: Expression validation utilities
+- **`expression_tree/`**: Core expression tree functionality
+  - `expression.py`: Expression class with caching and evaluation
+  - `core/`: Node definitions and operators
+  - `optimization/`: Memory pool for efficient node allocation
+  - `utils/`: Simplification, validation, and utility functions
 
-#### `generator.py`
-- `ExpressionGenerator`: Basic expression generation
-- `BiasedExpressionGenerator`: Expression generation with operator bias control
+- **`mimo_regressor.py`**: Main MIMO symbolic regression implementation
+- **`ensemble_regressor.py`**: Ensemble modeling with parallel processing
+- **`genetic_ops.py`**: Genetic operations (mutation, crossover, selection)
+- **`population.py`**: Population management and diversity functions
+- **`adaptive_evolution.py`**: Adaptive parameters and restart mechanisms
 
-#### `genetic_ops.py`
-- `GeneticOperations`: Advanced genetic operations including:
-  - Point mutation, subtree mutation, insert mutation
-  - Structural and simple crossover
-  - Diversity-preserving operations
+### Utility Modules
 
-#### `mimo_regressor.py`
-- `MIMOSymbolicRegressor`: Main regressor class with adaptive evolution
-
-### Population Management
-
-#### `population.py`
-- Diverse population generation strategies
-- Diversity injection mechanisms
-- Enhanced reproduction with simulated annealing
-- Population validation and fitness evaluation
-
-#### `selection.py`
-- Enhanced selection balancing fitness and diversity
-- Tournament selection with adaptive tournament size
-- Diversity-based selection methods
-
-### Evolution Control
-
-#### `adaptive_evolution.py`
-- Adaptive parameter adjustment
-- Population restart strategies
-- Stagnation detection and handling
-
-#### `evolution_stats.py`
-- Comprehensive evolution statistics tracking
-- Expression analysis and reporting
-
-### Utilities
-
-#### `utils.py`
-- String similarity calculations
-- Population diversity metrics
-- Expression uniqueness scoring
-
-#### `expression_utils.py`
-- SymPy expression conversion
-- Constant optimization utilities
+- **`generator.py`**: Expression generation utilities
+- **`selection.py`**: Selection strategies for genetic programming
+- **`utils.py`**: General utility functions
+- **`expression_utils.py`**: Expression manipulation utilities
+- **`evolution_stats.py`**: Evolution statistics and monitoring
+- **`constant_optimization.py`**: Constant optimization algorithms
 
 ---
 
-## Advanced Usage
+## Advanced Features
 
-### Custom Expression Generation
+### Expression Tree System
 
-```python
-from symbolic_regression import ExpressionGenerator, BiasedExpressionGenerator
+The expression tree system provides:
 
-# Basic generator
-generator = ExpressionGenerator(n_inputs=3, max_depth=5)
-expression = generator.generate_random_expression()
+- **Efficient Node Types**: Variable, constant, binary operation, and unary operation nodes
+- **Memory Pool**: High-performance memory allocation for nodes
+- **Caching**: Intelligent caching of expression evaluations
+- **Simplification**: Advanced simplification using SymPy integration
 
-# Biased generator for specific operator distributions
-biased_generator = BiasedExpressionGenerator(
-    n_inputs=3,
-    max_depth=5,
-    operator_rates={'+': 0.3, '*': 0.3, 'sin': 0.2, 'exp': 0.2}
-)
-biased_expression = biased_generator.generate_biased_expression()
-```
+### Genetic Programming
 
-### Custom Genetic Operations
+Advanced genetic programming features include:
 
-```python
-from symbolic_regression import GeneticOperations
+- **Adaptive Rates**: Mutation and crossover rates adapt based on population diversity
+- **Population Restart**: Automatic restart when evolution stagnates
+- **Elite Preservation**: Maintains best solutions across generations
+- **Diversity Injection**: Ensures population diversity to prevent premature convergence
 
-genetic_ops = GeneticOperations(n_inputs=3, max_complexity=20)
+### Expression Validation
 
-# Perform mutations
-mutated_expr = genetic_ops.mutate(expression, mutation_rate=0.2)
-
-# Perform crossover
-child1, child2 = genetic_ops.crossover(parent1, parent2)
-```
-
-### Population Management
-
-```python
-from symbolic_regression import (
-    generate_diverse_population, 
-    inject_diversity, 
-    enhanced_reproduction_v2
-)
-
-# Generate diverse initial population
-population = generate_diverse_population(
-    generator, n_inputs=3, population_size=100, 
-    max_depth=6, is_expression_valid=lambda x: True
-)
-
-# Inject diversity during evolution
-population = inject_diversity(
-    population, fitness_scores, generator, 
-    injection_rate=0.3, is_expression_valid=lambda x: True,
-    generate_high_diversity_expression=lambda g: g.generate_random_expression(),
-    # ... other parameters
-)
-```
-
-### Expression Analysis
-
-```python
-from symbolic_regression import to_sympy_expression, get_evolution_stats
-
-# Convert to SymPy for advanced analysis
-sympy_expr = to_sympy_expression("X[0]**2 + sin(X[1])")
-
-# Get detailed evolution statistics
-stats = regressor.get_evolution_stats()
-print(f"Final mutation rate: {stats['final_mutation_rate']}")
-print(f"Total generations: {stats['total_generations']}")
-
-# Get detailed expression information
-detailed_exprs = regressor.get_detailed_expressions()
-for expr_info in detailed_exprs:
-    print(f"Expression: {expr_info['expression']}")
-    print(f"Complexity: {expr_info['complexity']}")
-    print(f"Size: {expr_info['size']}")
-```
+- **Syntax Validation**: Ensures expressions are syntactically correct
+- **Semantic Validation**: Checks for mathematical validity
+- **Complexity Control**: Manages expression complexity and depth
 
 ---
 
-## Configuration Options
+## API Reference
 
-### MIMOSymbolicRegressor Parameters
+### MIMOSymbolicRegressor
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `population_size` | int | 100 | Number of individuals in population |
-| `generations` | int | 50 | Number of evolution generations |
-| `mutation_rate` | float | 0.1 | Initial mutation rate |
-| `crossover_rate` | float | 0.8 | Initial crossover rate |
-| `tournament_size` | int | 3 | Tournament selection size |
-| `max_depth` | int | 6 | Maximum expression tree depth |
-| `parsimony_coefficient` | float | 0.001 | Penalty for expression complexity |
-| `sympy_simplify` | bool | True | Enable SymPy simplification |
-| `advanced_simplify` | bool | False | Enable advanced simplification |
-| `diversity_threshold` | float | 0.7 | Diversity threshold for adaptive evolution |
-| `adaptive_rates` | bool | True | Enable adaptive mutation/crossover rates |
-| `restart_threshold` | int | 25 | Generations before population restart |
-| `elite_fraction` | float | 0.1 | Fraction of elite individuals to preserve |
-| `console_log` | bool | True | Enable console logging |
+```python
+class MIMOSymbolicRegressor:
+    def __init__(self,
+                 population_size: int = 100,
+                 generations: int = 50,
+                 mutation_rate: float = 0.1,
+                 crossover_rate: float = 0.8,
+                 tournament_size: int = 3,
+                 max_depth: int = 6,
+                 parsimony_coefficient: float = 0.001,
+                 sympy_simplify: bool = True,
+                 advanced_simplify: bool = False,
+                 diversity_threshold: float = 0.7,
+                 adaptive_rates: bool = True,
+                 restart_threshold: int = 25,
+                 elite_fraction: float = 0.1,
+                 console_log: bool = True)
+    
+    def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False)
+    def predict(self, X: np.ndarray) -> np.ndarray
+    def get_best_expression(self) -> Expression
+    def get_evolution_stats(self) -> dict
+```
+
+### EnsembleMIMORegressor
+
+```python
+class EnsembleMIMORegressor:
+    def __init__(self, n_fits: int = 8, top_n_select: int = 5, **regressor_kwargs)
+    
+    def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False)
+    def predict(self, X: np.ndarray) -> np.ndarray
+    def get_best_expressions(self) -> List[Expression]
+    def get_ensemble_stats(self) -> dict
+```
+
+### Expression
+
+```python
+class Expression:
+    def __init__(self, root: Node)
+    
+    def evaluate(self, X: np.ndarray) -> np.ndarray
+    def to_string(self) -> str
+    def to_sympy(self) -> sp.Expr
+    def complexity(self) -> float
+    def copy(self) -> Expression
+```
 
 ---
 
 ## Examples
 
-### Basic Regression
+See the `examples/` directory for comprehensive usage examples:
 
-```python
-import numpy as np
-from symbolic_regression import MIMOSymbolicRegressor
-
-# Generate data for y = x^2 + 2*x + 1
-X = np.linspace(-10, 10, 100).reshape(-1, 1)
-y = X[:, 0]**2 + 2*X[:, 0] + 1
-
-regressor = MIMOSymbolicRegressor(generations=100)
-regressor.fit(X, y)
-
-print(f"Discovered expression: {regressor.get_expressions()[0]}")
-print(f"R² Score: {regressor.score(X, y):.4f}")
-```
-
-### Multi-Output Regression
-
-```python
-# Generate multi-output data
-X = np.random.rand(100, 2)
-y = np.column_stack([
-    X[:, 0]**2 + X[:, 1],      # Output 1
-    np.sin(X[:, 0]) + X[:, 1]   # Output 2
-])
-
-regressor = MIMOSymbolicRegressor(generations=100)
-regressor.fit(X, y)
-
-expressions = regressor.get_expressions()
-print(f"Output 1 expression: {expressions[0]}")
-print(f"Output 2 expression: {expressions[1]}")
-```
-
-### Custom Validation
-
-```python
-from symbolic_regression import ExpressionValidator
-
-# Custom expression validation
-validator = ExpressionValidator()
-
-# Validate expression safety
-is_safe = validator.is_safe_expression(expression)
-print(f"Expression is safe: {is_safe}")
-
-# Check for numerical stability
-is_stable = validator.check_numerical_stability(expression, X)
-print(f"Expression is numerically stable: {is_stable}")
-```
+- `example_usage.py`: Basic usage demonstration
+- `test_example.py`: Testing with synthetic data
+- `test_stability.py`: Stability and performance testing
 
 ---
 
-## Performance Tips
+## Performance Considerations
 
-1. **Population Size**: Start with 100-200 individuals for complex problems
-2. **Generations**: Use 50-100 generations for simple problems, 200+ for complex ones
-3. **Max Depth**: Keep between 4-8 to balance complexity and performance
-4. **Diversity**: Enable adaptive rates and diversity injection for better exploration
-5. **Simplification**: Use SymPy simplification for cleaner final expressions
-6. **Memory Pool**: Automatically enabled for efficient expression evaluation
+- **Memory Pool**: Uses optimized memory allocation for faster expression evaluation
+- **Numba JIT**: Critical evaluation functions are JIT-compiled for speed
+- **Parallel Processing**: Ensemble modeling leverages multiprocessing
+- **Caching**: Intelligent caching reduces redundant computations
 
 ---
 
@@ -311,7 +225,7 @@ print(f"Expression is numerically stable: {is_stable}")
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes following the modular architecture
+3. Make your changes
 4. Add tests for new functionality
 5. Submit a pull request
 
@@ -328,24 +242,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 If you use this package in your research, please cite:
 
 ```bibtex
-@software{symbolic_regression_mimo,
-  title={Symbolic Regression Package for MIMO Systems},
+@software{symbolic_regression_package,
+  title={Symbolic Regression Package: A Modular Genetic Programming Approach},
   author={Your Name},
   year={2025},
-  url={https://github.com/yourusername/symbolic_regression}
+  url={https://github.com/yourusername/symbolic-regression}
 }
 ```
-
----
-
-## Changelog
-
-### Version 0.1.0
-- Initial modular architecture implementation
-- Advanced expression tree system with optimization
-- Enhanced genetic operations with diversity preservation
-- Adaptive evolution parameters
-- Comprehensive population management
-- SymPy integration for expression simplification
-- Memory pool optimization for performance
-- Detailed evolution statistics and reporting

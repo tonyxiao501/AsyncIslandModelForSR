@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Optional
-from expression_tree.core.node import Node
+from .core.node import Node
 import sympy as sp
 from typing import Callable
 

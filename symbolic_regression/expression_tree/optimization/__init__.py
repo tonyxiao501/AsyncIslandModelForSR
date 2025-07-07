@@ -1,5 +1,5 @@
 """Optimization utilities for expression trees."""
 
-from .memory_pool import MemoryPool
+from .memory_pool import NodePool, get_global_pool, clear_global_pool
 
-__all__ = ['MemoryPool']
+__all__ = ['NodePool', 'get_global_pool', 'clear_global_pool']
