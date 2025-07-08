@@ -9,15 +9,26 @@ class EnsembleMIMORegressor:
   Runs multiple MIMOSymbolicRegressor fits concurrently and selects an
   ensemble of the best overall expressions.
   """
-  def __init__(self, n_fits: int = 8, top_n_select: int = 5, **regressor_kwargs):
+  def __init__(self, n_fits: int = 8, top_n_select: int = 5,
+               enable_inter_thread_communication: bool = True,
+               exchange_interval: int = 10, purge_percentage: float = 0.15,
+               import_percentage: float = 0.03, debug_csv_path: str = None, **regressor_kwargs):
     """
-    Initializes the Ensemble Regressor.
+    Initializes the Ensemble Regressor with optional inter-thread communication.
 
     Args:
         n_fits (int): The number of regressor fits to run concurrently.
                       Defaults to 8 as requested.
         top_n_select (int): The number of best expressions to select from all
                             runs. Defaults to 5 as requested.
+        enable_inter_thread_communication (bool): Whether to enable communication
+                                                  between worker threads.
+        exchange_interval (int): How often (in generations) workers exchange expressions.
+        purge_percentage (float): Percentage of worst expressions to remove (0.14-0.21).
+        import_percentage (float): Percentage of best expressions to import from other workers.
+        debug_csv_path (str): Path to a CSV file for debugging purposes, to log
+                              the progress and results of each fit. If None, logging
+                              to CSV is disabled.
         **regressor_kwargs: Keyword arguments to be passed to each
                             underlying MIMOSymbolicRegressor instance.
     """
@@ -35,6 +46,15 @@ class EnsembleMIMORegressor:
     self.best_fitnesses: List[float] = []
     self.all_results: List[Dict] = []
 
+    # Inter-thread communication parameters
+    self.enable_inter_thread_communication = enable_inter_thread_communication
+    self.exchange_interval = exchange_interval
+    self.purge_percentage = purge_percentage
+    self.import_percentage = import_percentage
+
+    # Debug CSV path
+    self.debug_csv_path = debug_csv_path
+
   def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False):
     """
     Fits 'n_fits' regressors concurrently using multiprocessing, then selects
@@ -45,12 +65,30 @@ class EnsembleMIMORegressor:
     `if __name__ == "__main__":` block in your script.
     """
     print(f"Starting ensemble fit with {self.n_fits} concurrent regressors...")
+    if self.enable_inter_thread_communication:
+      print(f"Inter-thread communication enabled: exchange every {self.exchange_interval} generations")
+      print(f"Population exchange: purge {self.purge_percentage*100:.1f}%, import {self.import_percentage*100:.1f}%")
+
+    # Initialize shared population manager if inter-thread communication is enabled
+    shared_manager = None
+    if self.enable_inter_thread_communication:
+      from .shared_population_manager import create_improved_shared_data
+      shared_manager = create_improved_shared_data(
+        n_workers=self.n_fits,
+        exchange_interval=self.exchange_interval,
+        purge_percentage=self.purge_percentage,
+        import_percentage=self.import_percentage
+      )
 
     # Prepare configurations for each worker process.
     # We disable console logging for worker processes to keep the main output clean.
     worker_kwargs = self.regressor_kwargs.copy()
     worker_kwargs['console_log'] = False
-    configs = [(worker_kwargs, X, y, constant_optimize) for _ in range(self.n_fits)]
+
+    # Create configs with shared manager, worker IDs, and debug CSV path
+    configs = []
+    for i in range(self.n_fits):
+      configs.append((worker_kwargs, X, y, constant_optimize, shared_manager, i, self.debug_csv_path))
 
     # Run fits in parallel using a process pool
     with multiprocessing.Pool(processes=self.n_fits) as pool:
@@ -93,6 +131,11 @@ class EnsembleMIMORegressor:
             f"Complexity: {res['complexity']:.2f}, "
             f"From Run: {res['run']}, "
             f"Expression: {res['expression_str']}")
+
+    if self.enable_inter_thread_communication:
+      print(f"\nInter-thread communication summary:")
+      print(f"Workers exchanged expressions every {self.exchange_interval} generations")
+      print(f"This should have improved population diversity across threads")
 
   def predict(self, X: np.ndarray, strategy: str = 'mean') -> np.ndarray:
     """

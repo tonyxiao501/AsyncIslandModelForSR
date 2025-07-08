@@ -4,13 +4,13 @@ import numpy as np
 def _fit_worker(config: tuple):
   """
   A top-level function to be executed by each process in a multiprocessing Pool.
-  It initializes and fits a MIMOSymbolicRegressor instance.
+  It initializes and fits a MIMOSymbolicRegressor instance with optional inter-thread communication.
   """
   # Move the import here to avoid circular import
   from .mimo_regressor import MIMOSymbolicRegressor
   from .expression_tree.optimization.memory_pool import reset_global_pool
 
-  regressor_params, X, y, constant_optimize = config
+  regressor_params, X, y, constant_optimize, shared_manager, worker_id, debug_csv_path = config
 
   # Reset the global pool for this process to avoid multiprocessing conflicts
   reset_global_pool()
@@ -22,6 +22,15 @@ def _fit_worker(config: tuple):
   try:
     # Instantiate and fit the regressor for this process
     reg = MIMOSymbolicRegressor(**regressor_params)
+
+    # If shared manager is provided, enable inter-thread communication
+    if shared_manager is not None:
+      reg.enable_inter_thread_communication(shared_manager, worker_id)
+
+    # Set debug CSV path if provided
+    if debug_csv_path is not None:
+      reg.set_debug_csv_path(debug_csv_path, worker_id)
+
     reg.fit(X, y, constant_optimize=constant_optimize)
     # Return the fully fitted object for result aggregation
     return reg

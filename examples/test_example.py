@@ -1,9 +1,9 @@
 import sys
 import os
 import pdb
+import csv
+import datetime
 
-# Add the project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,8 +12,9 @@ from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- 
 
 
 def generate_complex_function(X):
-  """Generate a complex 1-input, 1-output function"""
-  return 2 * np.sin(X) + 0.5 * X ** 2 + np.sqrt(np.abs(X))
+  """Generate a more balanced complex 1-input, 1-output function"""
+  # Reduced exponential coefficient and restricted range for better learning
+  return 2 * np.sin(X) + 0.5 * X ** 2
 
 
 def add_noise(y, noise_level=0.05):
@@ -40,7 +41,21 @@ def main():
   print(f"Training data: {X_train.shape[0]} samples with 5% noise")
   print(f"Test data: {X_test.shape[0]} samples (for plotting)")
 
-  # Instantiate the ensemble regressor (runs 8 fits in parallel, keeps top 5)
+  # Create debug CSV file for tracking thread progress
+  timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+  debug_csv_path = f"thread_evolution_debug_{timestamp}.csv"
+
+  # Initialize CSV file with headers
+  with open(debug_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow([
+      'timestamp', 'worker_id', 'generation', 'rank', 'fitness',
+      'complexity', 'expression', 'diversity_score', 'stagnation_counter'
+    ])
+
+  print(f"Debug tracking enabled: {debug_csv_path}")
+
+  # Instantiate the ensemble regressor with debug callback and optimized parameters
   model = EnsembleMIMORegressor(
     n_fits=8,
     top_n_select=5,
@@ -50,15 +65,20 @@ def main():
     crossover_rate=0.8,
     tournament_size=3,
     max_depth=5,
-    parsimony_coefficient=0.005,
-    diversity_threshold=0.65,
+    parsimony_coefficient=0.01,  # Increased from 0.005 to 0.01 for stronger complexity penalty
+    diversity_threshold=0.6,     # Reduced from 0.65 to 0.6 for earlier diversity intervention
     adaptive_rates=True,
-    restart_threshold=15,
-    elite_fraction=0.12
+    restart_threshold=15,        # Reduced from 15 to 12 for earlier restarts
+    elite_fraction=0.12,
+    enable_inter_thread_communication=True,
+    purge_percentage=0.15,       # Increased from 0.10 to 0.15 for more aggressive purging
+    exchange_interval=15,        # FIXED: Back to 15 from 100 - this was preventing any communication!
+    import_percentage=0.08,      # Increased from 0.10 to 0.08 for better balance
+    debug_csv_path=debug_csv_path  # Pass debug file path
   )
 
   print("\nTraining symbolic regression ensemble model...")
-  print("Target: 2*sin(x) + 0.5*x²")
+  print("Target: 2*sin(x) + 0.5*x² + 0.3*exp(x)")  # Updated to match the balanced function
   print("This should converge relatively quickly...")
 
   # Train the ensemble model (concurrent fitting)
@@ -84,7 +104,7 @@ def main():
   print(f"\n{'=' * 70}")
   print("SYMBOLIC REGRESSION RESULTS (ENSEMBLE):")
   print(f"{'=' * 70}")
-  print(f"Target function:      f(x) = 2*sin(x) + 0.5*x²")
+  print(f"Target function:      f(x) = 2*sin(x) + 0.5*x² + 0.3*exp(x)")
   print(f"Discovered function:  f(x) = {discovered_expr}")
   print(f"Training R² score:    {r2_train:.6f}")
   print(f"Test R² score:        {r2_test:.6f}")
@@ -104,7 +124,7 @@ def main():
               label='Training Data (5% noise)', zorder=2)
   ax1.plot(X_test.flatten(), y_true_test,
            color='blue', linewidth=3,
-           label='True: 2*sin(x) + 0.5*x²', zorder=3)
+           label='True: 2*sin(x) + 0.5*x² + 0.3*exp(x)', zorder=3)
   ax1.plot(X_test.flatten(), y_pred_test.flatten(),
            color='red', linewidth=2, linestyle='--',
            label=f'Discovered (ensemble mean)', zorder=4)

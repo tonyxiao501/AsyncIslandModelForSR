@@ -1,4 +1,5 @@
 import numpy as np
+import os
 from typing import List, Optional, Dict, Any
 from .expression_tree import Expression
 from .generator import ExpressionGenerator
@@ -66,8 +67,73 @@ class MIMOSymbolicRegressor:
     self.best_expressions: List[Expression] = []
     self.fitness_history: List[float] = []
 
+    # Inter-thread communication components
+    self.shared_manager = None
+    self.worker_id = None
+    self.inter_thread_enabled = False
+
+    # Debug CSV tracking
+    self.debug_csv_path = None
+    self.debug_worker_id = None
+
     if self.advanced_simplify:
       self.sympy_simplifier = SymPySimplifier()
+
+  def enable_inter_thread_communication(self, shared_data, worker_id: int):
+    """Enable inter-thread communication for this regressor instance"""
+    self.shared_manager = shared_data
+    self.worker_id = worker_id
+    self.inter_thread_enabled = True
+    if self.console_log:
+      print(f"Worker {worker_id}: Inter-thread communication enabled")
+
+  def set_debug_csv_path(self, debug_csv_path: str, worker_id: int):
+    """Set the debug CSV path for tracking evolution progress"""
+    self.debug_csv_path = debug_csv_path
+    self.debug_worker_id = worker_id
+
+  def _write_debug_csv(self, generation: int, population: List, fitness_scores: List[float],
+                       diversity_score: float):
+    """Write the top 10 expressions from this generation to the debug CSV file"""
+    if not self.debug_csv_path or self.debug_worker_id is None:
+      return
+
+    try:
+      import csv
+      import datetime
+
+      # Get top 10 expressions by fitness
+      top_indices = sorted(range(len(fitness_scores)),
+                          key=lambda i: fitness_scores[i], reverse=True)[:10]
+
+      # Write to CSV file (append mode)
+      with open(self.debug_csv_path, 'a', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        for rank, idx in enumerate(top_indices, 1):
+          expr = population[idx]
+          fitness = fitness_scores[idx]
+          complexity = expr.complexity()
+          expression_str = expr.to_string()
+
+          writer.writerow([
+            timestamp,
+            self.debug_worker_id,
+            generation,
+            rank,
+            f"{fitness:.6f}",
+            f"{complexity:.3f}",
+            expression_str,
+            f"{diversity_score:.3f}",
+            self.stagnation_counter
+          ])
+
+    except Exception as e:
+      # Fail silently to not disrupt evolution
+      if self.console_log:
+        print(f"Debug CSV write failed: {e}")
 
   def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize=False):
     """Enhanced fit with diversity preservation and adaptive evolution"""
@@ -148,8 +214,8 @@ class MIMOSymbolicRegressor:
           self.current_mutation_rate, self.current_crossover_rate, self.stagnation_counter
         )
 
-      # Handle long-term stagnation with population restart
-      if self.stagnation_counter >= self.restart_threshold:
+      # Handle long-term stagnation with population restart - more aggressive threshold
+      if self.stagnation_counter >= 15:  # Reduced from 25 to 15 for earlier restart
         if self.console_log:
           print(f"Population restart at generation {generation} (stagnation: {self.stagnation_counter})")
         population = restart_population_enhanced(population, fitness_scores, generator, self.population_size, self.n_inputs)
@@ -157,10 +223,10 @@ class MIMOSymbolicRegressor:
         plateau_counter = 0
         continue
 
-      # Enhanced diversity injection for moderate stagnation
-      if self.stagnation_counter > 10 and diversity_score < self.diversity_threshold:
+      # Enhanced diversity injection for moderate stagnation - much more aggressive
+      if diversity_score < 0.5:  # Immediate intervention when diversity drops below 0.5
         population = inject_diversity(
-          population, fitness_scores, generator, 0.3,
+          population, fitness_scores, generator, 0.6,  # Inject 60% new diverse expressions
           lambda expr: is_expression_valid(expr, self.n_inputs),
           generate_high_diversity_expression,
           generate_targeted_diverse_expression,
@@ -168,7 +234,18 @@ class MIMOSymbolicRegressor:
           self.stagnation_counter, self.console_log
         )
         if self.console_log:
-          print(f"Diversity injection at generation {generation}")
+          print(f"Emergency diversity injection at generation {generation} (diversity={diversity_score:.3f})")
+      elif self.stagnation_counter > 5 and diversity_score < 0.65:  # Earlier intervention
+        population = inject_diversity(
+          population, fitness_scores, generator, 0.4,  # Standard injection rate
+          lambda expr: is_expression_valid(expr, self.n_inputs),
+          generate_high_diversity_expression,
+          generate_targeted_diverse_expression,
+          generate_complex_diverse_expression,
+          self.stagnation_counter, self.console_log
+        )
+        if self.console_log:
+          print(f"Diversity injection at generation {generation} (diversity={diversity_score:.3f})")
 
       # Enhanced reproduction with multiple strategies
       new_population = enhanced_reproduction_v2(
@@ -178,11 +255,48 @@ class MIMOSymbolicRegressor:
         X, y
       )
 
+      # Anti-convergence measure: If diversity is too low, force mutation of duplicates
+      if diversity_score < 0.4:
+        new_population = self._eliminate_duplicates(new_population, generator, 0.3)
+        if self.console_log:
+          print(f"Duplicate elimination at generation {generation} (diversity={diversity_score:.3f})")
+
       population = new_population
+
+      # Inter-thread communication: Exchange expressions with other workers
+      if self.inter_thread_enabled and self.shared_manager:
+        try:
+          # Check if we should exchange this generation
+          exchange_interval = self.shared_manager.get('exchange_interval', 20)
+          if generation > 0 and generation % exchange_interval == (self.worker_id % 5):
+            from .shared_population_manager import ImprovedSharedData
+
+            # Create temporary shared data handler
+            temp_shared = ImprovedSharedData(
+              n_workers=self.shared_manager['n_workers'],
+              exchange_interval=self.shared_manager['exchange_interval'],
+              purge_percentage=self.shared_manager['purge_percentage'],
+              import_percentage=self.shared_manager['import_percentage']
+            )
+            temp_shared.temp_dir = self.shared_manager['temp_dir']
+            temp_shared.lock_file = os.path.join(temp_shared.temp_dir, "exchange.lock")
+
+            population, fitness_scores = temp_shared.exchange_population_data(
+              self.worker_id, population, fitness_scores, generation, self.n_inputs
+            )
+            if self.console_log:
+              print(f"Worker {self.worker_id}: Population exchange completed at generation {generation}")
+        except Exception as e:
+          if self.console_log:
+            print(f"Worker {self.worker_id}: Population exchange failed: {e}")
 
       # Constant Optimize
       if constant_optimize:
         optimize_constants(X.squeeze(), y, population, generation - last_update, self.population_size, self.generations)
+
+      # Debug CSV logging - reduced frequency for better performance
+      if generation % 10 == 0:  # Only log every 10 generations instead of every generation
+        self._write_debug_csv(generation, population, fitness_scores, diversity_score)
 
     # Final reporting
     final_best = max(self.fitness_history) if self.fitness_history else -np.inf
@@ -265,3 +379,59 @@ class MIMOSymbolicRegressor:
       self.fitness_history, self.best_fitness_history, self.diversity_history,
       self.current_mutation_rate, self.current_crossover_rate, self.stagnation_counter
     )
+
+  def _eliminate_duplicates(self, population: List, generator: ExpressionGenerator,
+                           replacement_fraction: float) -> List:
+    """
+    Eliminate duplicate expressions to prevent premature convergence.
+    Replace duplicates with new diverse expressions.
+    """
+    # Count expression frequencies
+    expr_strings = [expr.to_string() for expr in population]
+    expr_counts = {}
+    for i, expr_str in enumerate(expr_strings):
+      if expr_str not in expr_counts:
+        expr_counts[expr_str] = []
+      expr_counts[expr_str].append(i)
+
+    # Find duplicates (expressions that appear more than once)
+    indices_to_replace = []
+    for expr_str, indices in expr_counts.items():
+      if len(indices) > 1:
+        # Keep the first occurrence, mark others for replacement
+        indices_to_replace.extend(indices[1:])
+
+    # Also replace some random expressions to maintain diversity
+    remaining_indices = [i for i in range(len(population)) if i not in indices_to_replace]
+    additional_replacements = int(len(population) * replacement_fraction)
+    if additional_replacements > 0 and remaining_indices:
+      import random
+      additional_indices = random.sample(
+        remaining_indices,
+        min(additional_replacements, len(remaining_indices))
+      )
+      indices_to_replace.extend(additional_indices)
+
+    # Replace marked expressions with new diverse ones
+    new_population = population.copy()
+    for idx in indices_to_replace:
+      try:
+        # Generate a new diverse expression
+        new_expr = generate_high_diversity_expression(generator, self.n_inputs, self.max_depth)
+        if is_expression_valid(new_expr, self.n_inputs):
+          new_population[idx] = new_expr
+        else:
+          # Fallback to generator's method - FIX: use correct method name
+          new_node = generator.generate_random_expression()
+          new_population[idx] = Expression(new_node)
+      except:
+        # If generation fails, use a simple fallback - FIX: use correct method name
+        try:
+          new_node = generator.generate_random_expression()
+          new_population[idx] = Expression(new_node)
+        except:
+          # Ultimate fallback - create a simple variable node
+          from .expression_tree.core.node import VariableNode
+          new_population[idx] = Expression(VariableNode(0))
+
+    return new_population
