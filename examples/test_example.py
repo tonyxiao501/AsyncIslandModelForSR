@@ -19,7 +19,7 @@ from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- 
 def generate_complex_function(X):
   """Generate a more balanced complex 1-input,function"""
   # Reduced exponential coefficient and restricted range for better learning
-  return 2 * np.sin(X) + 0.5 * X ** 2
+  return 2 * np.sin(X) + np.cos(2*X)
 
 
 def add_noise(y, noise_level=0.05):
@@ -42,7 +42,7 @@ def main():
   X_test = np.linspace(-3, 3, 300).reshape(-1, 1)
   y_true_test = generate_complex_function(X_test.flatten())
 
-  print("Target function: f(x) = 2*sin(x) + 0.5*x²")
+  print("Target function: f(x) = 2*sin(x) + cos(2*x)")
   print(f"Training data: {X_train.shape[0]} samples with 5% noise")
   print(f"Test data: {X_test.shape[0]} samples (for plotting)")
 
@@ -64,13 +64,13 @@ def main():
   model = EnsembleMIMORegressor(
     n_fits=8,
     top_n_select=5,
-    population_size=150,
+    population_size=200,
     generations=200,
     mutation_rate=0.15,
     crossover_rate=0.8,
     tournament_size=3,
     max_depth=5,
-    parsimony_coefficient=0.01,  # Increased from 0.005 to 0.01 for stronger complexity penalty
+    parsimony_coefficient=0.003,
     diversity_threshold=0.6,     # Reduced from 0.65 to 0.6 for earlier diversity intervention
     adaptive_rates=True,
     restart_threshold=15,        # Reduced from 15 to 12 for earlier restarts
@@ -83,7 +83,7 @@ def main():
   )
 
   print("\nTraining symbolic regression ensemble model...")
-  print("Target: 2*sin(x) + 0.5*x² + 0.3*exp(x)")  # Updated to match the balanced function
+  print("Target: 2*sin(x) + cos(2*X)")  # Updated to match the balanced function
   print("This should converge relatively quickly...")
 
   # Train the ensemble model (concurrent fitting)
@@ -109,7 +109,7 @@ def main():
   print(f"\n{'=' * 70}")
   print("SYMBOLIC REGRESSION RESULTS (ENSEMBLE):")
   print(f"{'=' * 70}")
-  print(f"Target function:      f(x) = 2*sin(x) + 0.5*x² + 0.3*exp(x)")
+  print(f"Target function:      f(x) = 2*sin(x) + cos(2*x)")
   print(f"Discovered function:  f(x) = {discovered_expr}")
   print(f"Training R² score:    {r2_train:.6f}")
   print(f"Test R² score:        {r2_test:.6f}")
