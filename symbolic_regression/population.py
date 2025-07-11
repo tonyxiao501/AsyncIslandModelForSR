@@ -170,7 +170,21 @@ def enhanced_reproduction_v2(population, fitness_scores, genetic_ops, diversity_
     if random.random() < current_crossover_rate and len(new_population) < population_size - 1:
       parent1 = random.choice(population)
       parent2 = random.choice(population)
-      child1, child2 = genetic_ops.crossover(parent1, parent2)
+      
+      try:
+          pred1 = parent1.evaluate(X)
+          pred2 = parent2.evaluate(X)
+          
+          if pred1.ndim == 1: pred1 = pred1.reshape(-1, 1)
+          if pred2.ndim == 1: pred2 = pred2.reshape(-1, 1)
+
+          residuals1 = (y - pred1).flatten()
+          residuals2 = (y - pred2).flatten()
+
+          child1, child2 = genetic_ops.quality_guided_crossover(parent1, parent2, X, residuals1, residuals2)
+      except Exception:
+          child1, child2 = genetic_ops.crossover(parent1, parent2)
+
       if random.random() < current_mutation_rate:
         child1 = genetic_ops.mutate(child1, current_mutation_rate)
       if random.random() < current_mutation_rate:

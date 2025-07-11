@@ -4,6 +4,11 @@ import pdb
 import csv
 import datetime
 
+# Add the project root to the Python path to resolve the import error
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,7 +17,7 @@ from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- 
 
 
 def generate_complex_function(X):
-  """Generate a more balanced complex 1-input, 1-output function"""
+  """Generate a more balanced complex 1-input,function"""
   # Reduced exponential coefficient and restricted range for better learning
   return 2 * np.sin(X) + 0.5 * X ** 2
 

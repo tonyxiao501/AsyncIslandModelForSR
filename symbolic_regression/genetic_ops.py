@@ -1,6 +1,8 @@
 import numpy as np
 import random
 from typing import List, Tuple, Optional
+
+from .quality_assessment import calculate_subtree_qualities
 from .expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
 from .expression_tree.utils.simplifier import ExpressionSimplifier
 from .generator import ExpressionGenerator
@@ -313,3 +315,51 @@ class GeneticOperations:
       return float(fitness)
     except Exception:
       return -1e8
+  # In genetic_ops.py, inside the GeneticOperations class
+
+def quality_guided_crossover(self, parent1: Expression, parent2: Expression, X: np.ndarray, residuals1: np.ndarray, residuals2: np.ndarray) -> Tuple[Expression, Expression]:
+    """
+    Performs crossover by probabilistically swapping high-quality subtrees.
+    """
+    child1 = parent1.copy()
+    child2 = parent2.copy()
+
+    # 1. Get quality scores for all subtrees
+    qualities1 = calculate_subtree_qualities(child1, X, residuals1)
+    qualities2 = calculate_subtree_qualities(child2, X, residuals2)
+
+    nodes1 = list(qualities1.keys())
+    scores1 = np.array(list(qualities1.values()), dtype=np.float64)
+
+    nodes2 = list(qualities2.keys())
+    scores2 = np.array(list(qualities2.values()), dtype=np.float64)
+
+    # 2. Fallback to simple structural crossover if quality calculation fails or is trivial
+    if np.sum(scores1) < 1e-6 or np.sum(scores2) < 1e-6 or len(nodes1) <= 1 or len(nodes2) <= 1:
+        return self._structural_crossover(parent1, parent2)
+
+    # 3. Create probability distributions from quality scores
+    probs1 = scores1 / np.sum(scores1)
+    probs2 = scores2 / np.sum(scores2)
+
+    # 4. Probabilistically select crossover points
+    idx1 = np.random.choice(len(nodes1), p=probs1)
+    idx2 = np.random.choice(len(nodes2), p=probs2)
+    crossover_point1 = nodes1[idx1]
+    crossover_point2 = nodes2[idx2]
+
+    # 5. Avoid swapping the entire tree (root node)
+    if crossover_point1 is child1.root or crossover_point2 is child2.root:
+        return self._structural_crossover(parent1, parent2) # Fallback
+
+    # 6. Perform the swap
+    subtree1 = crossover_point1.copy()
+    subtree2 = crossover_point2.copy()
+
+    self._replace_node_in_tree(child1.root, crossover_point1, subtree2)
+    self._replace_node_in_tree(child2.root, crossover_point2, subtree1)
+
+    child1.clear_cache()
+    child2.clear_cache()
+
+    return child1, child2
