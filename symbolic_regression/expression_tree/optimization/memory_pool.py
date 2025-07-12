@@ -91,29 +91,43 @@ class NodePool:
     self.unary_pool.clear()
 
 
-# Global instance - process-local initialization
+# Global instance - process-local initialization with optimized locking
 _GLOBAL_POOL: Optional[NodePool] = None
+_INITIALIZED = False
 _POOL_LOCK = threading.Lock()
 
 
 def get_global_pool() -> NodePool:
-  global _GLOBAL_POOL
-  if _GLOBAL_POOL is None:
-    with _POOL_LOCK:
-      if _GLOBAL_POOL is None:  # Double-check locking
-        _GLOBAL_POOL = NodePool()
+  """Get the global pool instance with optimized initialization for multiprocessing"""
+  global _GLOBAL_POOL, _INITIALIZED
+  
+  # Fast path - no locking needed once initialized
+  if _INITIALIZED and _GLOBAL_POOL is not None:
+    return _GLOBAL_POOL
+  
+  # Slow path - use lock only during initialization
+  with _POOL_LOCK:
+    if not _INITIALIZED or _GLOBAL_POOL is None:
+      _GLOBAL_POOL = NodePool()
+      _INITIALIZED = True
+  
   return _GLOBAL_POOL
 
 
 def clear_global_pool():
-  global _GLOBAL_POOL
+  """Clear the global pool with minimal locking"""
+  global _GLOBAL_POOL, _INITIALIZED
   with _POOL_LOCK:
     if _GLOBAL_POOL is not None:
       _GLOBAL_POOL.clear()
     _GLOBAL_POOL = None
+    _INITIALIZED = False
 
 
 def reset_global_pool():
-  """Reset the global pool - useful for multiprocessing"""
-  global _GLOBAL_POOL
+  """Reset the global pool - optimized for multiprocessing"""
+  global _GLOBAL_POOL, _INITIALIZED
+  # In multiprocessing, each process gets its own memory space
+  # so we can reset without locking in most cases
   _GLOBAL_POOL = None
+  _INITIALIZED = False

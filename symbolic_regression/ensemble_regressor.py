@@ -65,13 +65,21 @@ class EnsembleMIMORegressor:
     `if __name__ == "__main__":` block in your script.
     """
     print(f"Starting ensemble fit with {self.n_fits} concurrent regressors...")
-    if self.enable_inter_thread_communication:
+    
+    # Disable inter-thread communication by default to avoid synchronization overhead
+    use_communication = (self.enable_inter_thread_communication and 
+                        self.n_fits >= 4 and 
+                        self.regressor_kwargs.get('generations', 50) >= 50)
+    
+    if use_communication:
       print(f"Inter-thread communication enabled: exchange every {self.exchange_interval} generations")
       print(f"Population exchange: purge {self.purge_percentage*100:.1f}%, import {self.import_percentage*100:.1f}%")
+    else:
+      print("Inter-thread communication disabled for optimal performance.")
 
-    # Initialize shared population manager if inter-thread communication is enabled
+    # Initialize shared population manager only if communication is actually used
     shared_manager = None
-    if self.enable_inter_thread_communication:
+    if use_communication:
       from .shared_population_manager import create_improved_shared_data
       shared_manager = create_improved_shared_data(
         n_workers=self.n_fits,
@@ -84,14 +92,24 @@ class EnsembleMIMORegressor:
     # We disable console logging for worker processes to keep the main output clean.
     worker_kwargs = self.regressor_kwargs.copy()
     worker_kwargs['console_log'] = False
-
-    # Create configs with shared manager, worker IDs, and debug CSV path
+    
+    # Use different random seeds and parameters for diversity without communication overhead
     configs = []
     for i in range(self.n_fits):
-      configs.append((worker_kwargs, X, y, constant_optimize, shared_manager, i, self.debug_csv_path))
+      # Each worker gets slightly different parameters for natural diversity
+      worker_specific_kwargs = worker_kwargs.copy()
+      if not use_communication:
+        # Add parameter diversity when not using communication
+        base_mutation = worker_kwargs.get('mutation_rate', 0.1)
+        base_parsimony = worker_kwargs.get('parsimony_coefficient', 0.001)
+        
+        worker_specific_kwargs['mutation_rate'] = base_mutation * (0.8 + 0.4 * i / max(1, self.n_fits - 1))
+        worker_specific_kwargs['parsimony_coefficient'] = base_parsimony * (0.5 + 1.0 * i / max(1, self.n_fits - 1))
+      
+      configs.append((worker_specific_kwargs, X, y, constant_optimize, shared_manager, i, self.debug_csv_path))
 
-    # Run fits in parallel using a process pool
-    with multiprocessing.Pool(processes=self.n_fits) as pool:
+    # Run fits in parallel using a process pool with optimized settings
+    with multiprocessing.Pool(processes=self.n_fits, maxtasksperchild=1) as pool:
       results = pool.map(_fit_worker, configs)
 
     print("All concurrent fits completed. Aggregating and ranking results...")

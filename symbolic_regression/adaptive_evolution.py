@@ -4,7 +4,7 @@ from typing import List
 from .expression_tree import Expression
 from .generator import ExpressionGenerator
 from .genetic_ops import GeneticOperations
-from .population import is_expression_valid
+from .population import PopulationManager
 
 def update_adaptive_parameters(self, generation: int, diversity_score: float, plateau_counter: int,
                                diversity_threshold: float, mutation_rate: float, crossover_rate: float,
@@ -43,7 +43,8 @@ def update_adaptive_parameters(self, generation: int, diversity_score: float, pl
   return new_mutation_rate, new_crossover_rate
 
 def restart_population_enhanced(population: List[Expression], fitness_scores: List[float],
-                                generator: ExpressionGenerator, population_size: int, n_inputs: int):
+                                generator: ExpressionGenerator, population_size: int, n_inputs: int,
+                                pop_manager: PopulationManager):
   """Enhanced population restart with better elite preservation"""
   # Keep top performers (more aggressive selection)
   elite_count = max(2, int(population_size * 0.05))  # Keep top 5%
@@ -60,19 +61,19 @@ def restart_population_enhanced(population: List[Expression], fitness_scores: Li
     # High mutation variants
     for _ in range(2):
       mutated = genetic_ops.mutate(elite, 0.4)
-      if is_expression_valid(mutated, n_inputs):
+      if pop_manager.is_expression_valid_cached(mutated):
         new_population.append(mutated)
 
     # Medium mutation variants
     for _ in range(2):
       mutated = genetic_ops.mutate(elite, 0.2)
-      if is_expression_valid(mutated, n_inputs):
+      if pop_manager.is_expression_valid_cached(mutated):
         new_population.append(mutated)
 
   # Fill rest with completely new diverse individuals
   while len(new_population) < population_size:
     new_expr = Expression(generator.generate_random_expression())
-    if is_expression_valid(new_expr, n_inputs):
+    if pop_manager.is_expression_valid_cached(new_expr):
       new_population.append(new_expr)
 
   return new_population[:population_size]

@@ -1,10 +1,11 @@
 import random
 import numpy as np
+import os
 
 def _fit_worker(config: tuple):
   """
-  A top-level function to be executed by each process in a multiprocessing Pool.
-  It initializes and fits a MIMOSymbolicRegressor instance with optional inter-thread communication.
+  Optimized worker function for multiprocessing with minimal synchronization overhead.
+  Each process runs independently with unique parameters for diversity.
   """
   # Move the import here to avoid circular import
   from .mimo_regressor import MIMOSymbolicRegressor
@@ -16,27 +17,29 @@ def _fit_worker(config: tuple):
   reset_global_pool()
 
   # Each process must have its own random seed to ensure diversity in runs
-  random.seed()
-  np.random.seed()
+  # Use a combination of worker_id and process ID for uniqueness
+  seed = hash((worker_id, os.getpid())) % 2**32
+  random.seed(seed)
+  np.random.seed(seed % 2**32)
 
   try:
-    # Instantiate and fit the regressor for this process
+    # Instantiate the regressor for this process
     reg = MIMOSymbolicRegressor(**regressor_params)
 
-    # If shared manager is provided, enable inter-thread communication
+    # Only enable inter-thread communication if shared manager is provided
+    # This avoids all synchronization overhead when not needed
     if shared_manager is not None:
       reg.enable_inter_thread_communication(shared_manager, worker_id)
 
-    # Set debug CSV path if provided
+    # Set debug CSV path if provided (minimal overhead)
     if debug_csv_path is not None:
       reg.set_debug_csv_path(debug_csv_path, worker_id)
 
     reg.fit(X, y, constant_optimize=constant_optimize)
-    # Return the fully fitted object for result aggregation
+    
     return reg
   except KeyboardInterrupt:
-    # Handle keyboard interrupts gracefully
     return None
   except Exception as e:
-    print(f"A worker process failed with an error: {e}")
+    print(f"Worker process {worker_id} failed: {str(e)}")
     return None

@@ -6,8 +6,10 @@ from .generator import ExpressionGenerator
 from .genetic_ops import GeneticOperations
 from .expression_tree.utils.sympy_utils import SymPySimplifier
 from .population import (
-  generate_diverse_population, inject_diversity, is_expression_valid,
-  generate_high_diversity_expression, generate_targeted_diverse_expression, generate_complex_diverse_expression, enhanced_reproduction_v2, evaluate_population_enhanced
+  PopulationManager, generate_diverse_population_optimized, inject_diversity_optimized,
+  evaluate_population_enhanced_optimized,
+  generate_high_diversity_expression_optimized, generate_targeted_diverse_expression_optimized, 
+  generate_complex_diverse_expression_optimized
 )
 from .utils import calculate_population_diversity
 from .adaptive_evolution import (
@@ -66,6 +68,9 @@ class MIMOSymbolicRegressor:
     self.n_outputs: Optional[int] = None
     self.best_expressions: List[Expression] = []
     self.fitness_history: List[float] = []
+    
+    # Population manager (will be initialized when n_inputs is set)
+    self.pop_manager: Optional[PopulationManager] = None
 
     # Inter-thread communication components
     self.shared_manager = None
@@ -148,6 +153,11 @@ class MIMOSymbolicRegressor:
 
     self.n_inputs = X.shape[1]
     self.n_outputs = y.shape[1]
+    
+    # Initialize population manager
+    if self.n_inputs is None:
+      raise ValueError("n_inputs must be set before generating population")
+    self.pop_manager = PopulationManager(self.n_inputs, self.max_depth)
 
     # Reset evolution state
     self.fitness_history = []
@@ -162,7 +172,7 @@ class MIMOSymbolicRegressor:
     if self.n_inputs is None:
       raise ValueError("n_inputs must be set before generating population")
     generator = ExpressionGenerator(self.n_inputs, self.max_depth)
-    population = generate_diverse_population(generator, self.n_inputs, self.population_size, self.max_depth, lambda expr: is_expression_valid(expr, self.n_inputs))
+    population = generate_diverse_population_optimized(generator, self.n_inputs, self.population_size, self.max_depth, self.pop_manager)
 
     genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25)
     best_fitness = -np.inf
@@ -172,7 +182,7 @@ class MIMOSymbolicRegressor:
 
     for generation in range(self.generations):
       # Evaluate fitness with enhanced scoring
-      fitness_scores = evaluate_population_enhanced(population, X, y, self.parsimony_coefficient)
+      fitness_scores = evaluate_population_enhanced_optimized(population, X, y, self.parsimony_coefficient, self.pop_manager)
 
       # Calculate diversity metrics
       diversity_score = calculate_population_diversity(population)
@@ -218,42 +228,59 @@ class MIMOSymbolicRegressor:
       if self.stagnation_counter >= 15:  # Reduced from 25 to 15 for earlier restart
         if self.console_log:
           print(f"Population restart at generation {generation} (stagnation: {self.stagnation_counter})")
-        population = restart_population_enhanced(population, fitness_scores, generator, self.population_size, self.n_inputs)
+        population = restart_population_enhanced(population, fitness_scores, generator, self.population_size, self.n_inputs, self.pop_manager)
         self.stagnation_counter = 0
         plateau_counter = 0
         continue
 
       # Enhanced diversity injection for moderate stagnation - much more aggressive
       if diversity_score < 0.5:  # Immediate intervention when diversity drops below 0.5
-        population = inject_diversity(
+        population = inject_diversity_optimized(
           population, fitness_scores, generator, 0.6,  # Inject 60% new diverse expressions
-          lambda expr: is_expression_valid(expr, self.n_inputs),
-          generate_high_diversity_expression,
-          generate_targeted_diverse_expression,
-          generate_complex_diverse_expression,
+          self.pop_manager,
           self.stagnation_counter, self.console_log
         )
         if self.console_log:
           print(f"Emergency diversity injection at generation {generation} (diversity={diversity_score:.3f})")
       elif self.stagnation_counter > 5 and diversity_score < 0.65:  # Earlier intervention
-        population = inject_diversity(
+        population = inject_diversity_optimized(
           population, fitness_scores, generator, 0.4,  # Standard injection rate
-          lambda expr: is_expression_valid(expr, self.n_inputs),
-          generate_high_diversity_expression,
-          generate_targeted_diverse_expression,
-          generate_complex_diverse_expression,
+          self.pop_manager,
           self.stagnation_counter, self.console_log
         )
         if self.console_log:
           print(f"Diversity injection at generation {generation} (diversity={diversity_score:.3f})")
 
       # Enhanced reproduction with multiple strategies
-      new_population = enhanced_reproduction_v2(
-        population, fitness_scores, genetic_ops, diversity_score, generation,
-        self.population_size, self.elite_fraction, self.current_crossover_rate, self.current_mutation_rate,
-        self.n_inputs, self.max_depth, lambda expr: is_expression_valid(expr, self.n_inputs), generate_high_diversity_expression,
-        X, y
-      )
+      new_population = []
+      
+      # Elite preservation
+      elite_count = max(1, int(self.elite_fraction * self.population_size))
+      elite_indices = np.argsort(fitness_scores)[-elite_count:]
+      for idx in elite_indices:
+        new_population.append(population[idx].copy())
+      
+      # Generate rest of population through crossover and mutation
+      while len(new_population) < self.population_size:
+        if len(new_population) + 1 < self.population_size and np.random.random() < self.current_crossover_rate:
+          # Crossover
+          parent1 = population[np.random.choice(len(population))]
+          parent2 = population[np.random.choice(len(population))]
+          child1, child2 = genetic_ops.crossover(parent1, parent2)
+          
+          if self.pop_manager.is_expression_valid_cached(child1):
+            new_population.append(child1)
+          if len(new_population) < self.population_size and self.pop_manager.is_expression_valid_cached(child2):
+            new_population.append(child2)
+        else:
+          # Mutation
+          parent = population[np.random.choice(len(population))]
+          child = genetic_ops.mutate(parent, self.current_mutation_rate)
+          
+          if self.pop_manager.is_expression_valid_cached(child):
+            new_population.append(child)
+      
+      new_population = new_population[:self.population_size]
 
       # Anti-convergence measure: If diversity is too low, force mutation of duplicates
       if diversity_score < 0.4:
@@ -419,11 +446,15 @@ class MIMOSymbolicRegressor:
     for idx in indices_to_replace:
       try:
         # Generate a new diverse expression
-        new_expr = generate_high_diversity_expression(generator)
-        if is_expression_valid(new_expr, self.n_inputs):
-          new_population[idx] = new_expr
+        if self.n_inputs is not None and self.pop_manager is not None:
+          new_expr = generate_high_diversity_expression_optimized(generator, self.n_inputs)
+          if self.pop_manager.is_expression_valid_cached(new_expr):
+            new_population[idx] = new_expr
+          else:
+            # Fallback to generator's method - FIX: use correct method name
+            new_node = generator.generate_random_expression()
+            new_population[idx] = Expression(new_node)
         else:
-          # Fallback to generator's method - FIX: use correct method name
           new_node = generator.generate_random_expression()
           new_population[idx] = Expression(new_node)
       except:

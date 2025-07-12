@@ -21,9 +21,8 @@ from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- 
 
 
 def generate_complex_function(X):
-  """Generate a more balanced complex 1-input,function"""
-  # Reduced exponential coefficient and restricted range for better learning
-  return 2 * np.sin(X) + np.cos(2*X)
+  """Generate a complex but well-behaved function: 2*sin(x) + cos(2*x)"""
+  return 2*np.sin(X) + np.cos(2*X)
 
 
 def add_noise(y, noise_level=0.05):
@@ -66,28 +65,28 @@ def main():
 
   # Instantiate the ensemble regressor with debug callback and optimized parameters
   model = EnsembleMIMORegressor(
-    n_fits=8,
-    top_n_select=5,
-    population_size=200,
-    generations=200,
+    n_fits=8,                    
+    top_n_select=5,             
+    population_size=200,         
+    generations=200,             
     mutation_rate=0.15,
     crossover_rate=0.8,
     tournament_size=3,
     max_depth=5,
     parsimony_coefficient=0.003,
-    diversity_threshold=0.6,     # Reduced from 0.65 to 0.6 for earlier diversity intervention
+    diversity_threshold=0.6,     
     adaptive_rates=True,
-    restart_threshold=15,        # Reduced from 15 to 12 for earlier restarts
+    restart_threshold=15,        
     elite_fraction=0.12,
     enable_inter_thread_communication=True,
-    purge_percentage=0.15,       # Increased from 0.10 to 0.15 for more aggressive purging
-    exchange_interval=15,        # FIXED: Back to 15 from 100 - this was preventing any communication!
-    import_percentage=0.08,      # Increased from 0.10 to 0.08 for better balance
+    purge_percentage=0.15,       
+    exchange_interval=15,       
+    import_percentage=0.08,      
     debug_csv_path=debug_csv_path  # Pass debug file path
   )
 
   print("\nTraining symbolic regression ensemble model...")
-  print("Target: 2*sin(x) + cos(2*X)")  # Updated to match the balanced function
+  print("Target: 2*sin(x) + cos(2*x)")
   print("This should converge relatively quickly...")
 
   # Profile the model fitting section
@@ -146,7 +145,7 @@ def main():
               label='Training Data (5% noise)', zorder=2)
   ax1.plot(X_test.flatten(), y_true_test,
            color='blue', linewidth=3,
-           label='True: 2*sin(x) + 0.5*x² + 0.3*exp(x)', zorder=3)
+           label='True: 2*sin(x) + cos(2*x)', zorder=3)
   ax1.plot(X_test.flatten(), y_pred_test.flatten(),
            color='red', linewidth=2, linestyle='--',
            label=f'Discovered (ensemble mean)', zorder=4)

@@ -14,10 +14,12 @@ from .genetic_ops import GeneticOperations
 from .mimo_regressor import MIMOSymbolicRegressor
 from .ensemble_regressor import EnsembleMIMORegressor
 from .population import (
-  generate_diverse_population, inject_diversity, is_expression_valid,
-  generate_high_diversity_expression, generate_targeted_diverse_expression,
-  generate_complex_diverse_expression, enhanced_reproduction_v2,
-  evaluate_population_enhanced
+  PopulationManager, generate_diverse_population_optimized, inject_diversity_optimized,
+  evaluate_population_enhanced_optimized,
+  generate_simple_combination_optimized, generate_high_diversity_expression_optimized,
+  generate_targeted_diverse_expression_optimized, generate_complex_diverse_expression_optimized,
+  generate_polynomial_expression_optimized, generate_mixed_expression_optimized,
+  generate_constant_heavy_optimized
 )
 from .selection import enhanced_selection, diversity_selection, tournament_selection
 from .utils import (
@@ -34,10 +36,12 @@ __all__ = [
   "BinaryOpNode", "UnaryOpNode",
   "ExpressionGenerator", "BiasedExpressionGenerator",
   "GeneticOperations", "MIMOSymbolicRegressor", "EnsembleMIMORegressor",
-  "generate_diverse_population", "inject_diversity", "is_expression_valid",
-  "generate_high_diversity_expression", "generate_targeted_diverse_expression",
-  "generate_complex_diverse_expression", "enhanced_reproduction_v2",
-  "evaluate_population_enhanced",
+  "PopulationManager", "generate_diverse_population_optimized", "inject_diversity_optimized",
+  "evaluate_population_enhanced_optimized",
+  "generate_simple_combination_optimized", "generate_high_diversity_expression_optimized",
+  "generate_targeted_diverse_expression_optimized", "generate_complex_diverse_expression_optimized",
+  "generate_polynomial_expression_optimized", "generate_mixed_expression_optimized",
+  "generate_constant_heavy_optimized",
   "enhanced_selection", "diversity_selection", "tournament_selection",
   "string_similarity", "calculate_expression_uniqueness",
   "calculate_population_diversity",
