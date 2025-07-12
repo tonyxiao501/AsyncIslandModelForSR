@@ -3,6 +3,10 @@ import os
 import pdb
 import csv
 import datetime
+import cProfile
+import pstats
+import io
+import time
 
 # Add the project root to the Python path to resolve the import error
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -86,8 +90,21 @@ def main():
   print("Target: 2*sin(x) + cos(2*X)")  # Updated to match the balanced function
   print("This should converge relatively quickly...")
 
+  # Profile the model fitting section
+  pr = cProfile.Profile()
+  pr.enable()
+  start = time.perf_counter()
   # Train the ensemble model (concurrent fitting)
   model.fit(X_train, y_train, constant_optimize=True)
+  end = time.perf_counter()
+  pr.disable()
+  print(f"Model fitting took {end - start:.2f} seconds.")
+
+  # Print top 20 cumulative time functions
+  s = io.StringIO()
+  ps = pstats.Stats(pr, stream=s).sort_stats('cumtime')
+  ps.print_stats(20)
+  print(s.getvalue())
 
   # Make predictions (using mean of ensemble)
   y_pred_train = model.predict(X_train, strategy='mean')

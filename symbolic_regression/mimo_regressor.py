@@ -268,7 +268,7 @@ class MIMOSymbolicRegressor:
         try:
           # Check if we should exchange this generation
           exchange_interval = self.shared_manager.get('exchange_interval', 20)
-          if generation > 0 and generation % exchange_interval == (self.worker_id % 5):
+          if generation > 0 and self.worker_id is not None and generation % exchange_interval == (self.worker_id % 5):
             from .shared_population_manager import ImprovedSharedData
 
             # Create temporary shared data handler
@@ -281,6 +281,8 @@ class MIMOSymbolicRegressor:
             temp_shared.temp_dir = self.shared_manager['temp_dir']
             temp_shared.lock_file = os.path.join(temp_shared.temp_dir, "exchange.lock")
 
+            if self.worker_id is None:
+              raise ValueError("worker_id must be set (not None) for population exchange.")
             population, fitness_scores = temp_shared.exchange_population_data(
               self.worker_id, population, fitness_scores, generation, self.n_inputs
             )
@@ -417,7 +419,7 @@ class MIMOSymbolicRegressor:
     for idx in indices_to_replace:
       try:
         # Generate a new diverse expression
-        new_expr = generate_high_diversity_expression(generator, self.n_inputs, self.max_depth)
+        new_expr = generate_high_diversity_expression(generator)
         if is_expression_valid(new_expr, self.n_inputs):
           new_population[idx] = new_expr
         else:
