@@ -222,7 +222,7 @@ class ImprovedSharedData:
           imported_expr = expr_data['expression_obj'].copy()
         else:
           # Use the new from_string method to properly reconstruct the expression
-          from ..expression_tree import Expression
+          from symbolic_regression.expression_tree import Expression
           imported_expr = Expression.from_string(expr_data['expression_str'], n_inputs)
 
         new_population.append(imported_expr)
@@ -233,11 +233,10 @@ class ImprovedSharedData:
       except Exception:
         # If import fails, generate a diverse expression instead
         try:
-          from ..generator import ExpressionGenerator
+          from symbolic_regression.generator import ExpressionGenerator
           generator = ExpressionGenerator(n_inputs, max_depth=6)
 
-          # Import expressions (create placeholder expressions for now)
-          from ..generator import ExpressionGenerator
+          from symbolic_regression.generator import ExpressionGenerator
           generator = ExpressionGenerator(n_inputs, max_depth=6)
 
           for expr_data in expressions_to_import:

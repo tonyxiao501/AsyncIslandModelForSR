@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional
 from .expression_tree import Expression
 import multiprocessing
 from .ensemble_worker import _fit_worker
@@ -12,7 +12,7 @@ class EnsembleMIMORegressor:
   def __init__(self, n_fits: int = 8, top_n_select: int = 5,
                enable_inter_thread_communication: bool = True,
                exchange_interval: int = 10, purge_percentage: float = 0.15,
-               import_percentage: float = 0.03, debug_csv_path: str = None, **regressor_kwargs):
+               import_percentage: float = 0.03, debug_csv_path: Optional[str] = None, **regressor_kwargs):
     """
     Initializes the Ensemble Regressor with optional inter-thread communication.
 
