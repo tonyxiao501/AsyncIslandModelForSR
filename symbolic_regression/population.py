@@ -47,11 +47,11 @@ class PopulationManager:
         return self._complexity_cache[expr_id]
     
     def is_expression_valid_cached(self, expr: Expression) -> bool:
-        """Optimized validation with minimal caching overhead"""
+        """Optimized validation with improved stability checking"""
         # Quick complexity check first without caching string
         try:
             complexity = expr.complexity()
-            if complexity > 30:
+            if complexity > 25:  # Reduced from 30 to be more selective
                 return False
         except:
             return False
@@ -68,12 +68,6 @@ class PopulationManager:
             # Continue with validation since cache was cleared
         
         try:
-            # Quick complexity check first
-            complexity = self.get_expression_complexity(expr)
-            if complexity > 30:
-                self._validation_cache[expr_str] = False
-                return False
-            
             # Use pre-computed test data for validation
             result = expr.evaluate(self._test_X)
             
@@ -86,24 +80,25 @@ class PopulationManager:
             if not isinstance(result, np.ndarray):
                 result = np.array(result)
             
-            # Check for finite values and reasonable magnitude
+            # More strict validation for finite values and reasonable magnitude
             is_finite = np.all(np.isfinite(result))
-            is_reasonable = np.max(np.abs(result)) < 1e10
+            is_reasonable = np.max(np.abs(result)) < 1e8  # Reduced from 1e10
+            has_variation = np.std(result) > 1e-10  # Ensure some variation in output
             
-            is_valid = bool(is_finite and is_reasonable)
+            is_valid = bool(is_finite and is_reasonable and has_variation)
             self._validation_cache[expr_str] = is_valid
             return is_valid
             
         except Exception as e:
-            # More permissive validation in multiprocessing environment
-            # Some expressions might fail due to subprocess issues but still be valid
+            # Less permissive validation - only fallback for simple cases
             try:
-                # Try a simpler validation with a single test point
-                test_point = np.array([[0.0] * self.n_inputs])
-                simple_result = expr.evaluate(test_point)
+                # Try with multiple test points for better validation
+                test_points = np.array([[1.0] * self.n_inputs, [0.0] * self.n_inputs, [-1.0] * self.n_inputs])
+                simple_result = expr.evaluate(test_points)
                 
-                if simple_result is not None and np.isfinite(simple_result).all():
-                    # If simple test passes, consider it valid
+                if (simple_result is not None and 
+                    np.isfinite(simple_result).all() and 
+                    np.max(np.abs(simple_result)) < 1e6):
                     self._validation_cache[expr_str] = True
                     return True
                 else:
@@ -111,7 +106,7 @@ class PopulationManager:
                     return False
                     
             except Exception:
-                # If even simple validation fails, mark as invalid
+                # If validation fails completely, mark as invalid
                 self._validation_cache[expr_str] = False
                 return False
     
@@ -253,48 +248,36 @@ def inject_diversity_optimized(population: List[Expression],
                              console_log: bool = True) -> List[Expression]:
     """Optimized diversity injection with single sort and batch operations"""
     
-    # Adaptive injection rate
-    if stagnation_counter > 15:
-        injection_rate = min(0.6, injection_rate * 2.0)
-    elif stagnation_counter > 8:
+    # Adaptive injection rate - more conservative
+    if stagnation_counter > 20:
         injection_rate = min(0.4, injection_rate * 1.5)
+    elif stagnation_counter > 12:
+        injection_rate = min(0.3, injection_rate * 1.2)
     
-    n_to_replace = max(2, int(len(population) * injection_rate))
+    n_to_replace = max(1, int(len(population) * injection_rate))
     
     # Single sort operation
     sorted_indices = np.argsort(fitness_scores)
     
-    # Pre-calculate index ranges
-    worst_count = max(1, n_to_replace // 3)
-    bottom_half_count = len(population) // 2
-    median_start = len(population) // 4
-    median_end = 3 * len(population) // 4
+    # Pre-calculate index ranges - focus on worst performers only
+    worst_count = max(1, min(n_to_replace, len(population) // 4))  # Only worst 25%
+    bottom_quarter_count = len(population) // 4
     
-    # Batch replacement strategy
+    # Batch replacement strategy - more conservative
     replacement_indices = []
     
-    # Worst performers
+    # Prioritize worst performers
     replacement_indices.extend(sorted_indices[:worst_count])
     
-    # Random from bottom half
+    # Only add random from bottom quarter if still needed
     if len(replacement_indices) < n_to_replace:
         remaining_needed = n_to_replace - len(replacement_indices)
-        bottom_indices = sorted_indices[:bottom_half_count]
+        bottom_indices = sorted_indices[:bottom_quarter_count]
         available_bottom = [idx for idx in bottom_indices if idx not in replacement_indices]
         
         if available_bottom:
             random_count = min(remaining_needed, len(available_bottom))
             replacement_indices.extend(np.random.choice(available_bottom, size=random_count, replace=False))
-    
-    # Median performers
-    if len(replacement_indices) < n_to_replace:
-        remaining_needed = n_to_replace - len(replacement_indices)
-        median_indices = sorted_indices[median_start:median_end]
-        available_median = [idx for idx in median_indices if idx not in replacement_indices]
-        
-        if available_median:
-            median_count = min(remaining_needed, len(available_median))
-            replacement_indices.extend(np.random.choice(available_median, size=median_count, replace=False))
     
     # Batch generate replacements
     new_population = population.copy()
@@ -338,12 +321,12 @@ def evaluate_population_enhanced_optimized(population: List[Expression],
                                          y: np.ndarray, 
                                          parsimony_coefficient: float,
                                          pop_manager: PopulationManager) -> List[float]:
-    """Optimized fitness evaluation with reduced complexity"""
+    """Optimized fitness evaluation with improved convergence"""
     fitness_scores = []
     
-    # Pre-calculate population diversity metrics once
+    # Pre-calculate population diversity metrics once - reduce diversity bonus impact
     diversity_metrics = pop_manager.calculate_population_diversity_optimized(population)
-    base_diversity_bonus = diversity_metrics['overall'] * 0.001
+    base_diversity_bonus = diversity_metrics['overall'] * 0.0005  # Reduced from 0.001
     
     # Batch evaluation
     for i, expr in enumerate(population):
@@ -355,22 +338,25 @@ def evaluate_population_enhanced_optimized(population: List[Expression],
             # Core fitness calculation
             mse = np.mean((y - predictions) ** 2)
             
-            # Cached complexity
-            complexity_penalty = parsimony_coefficient * pop_manager.get_expression_complexity(expr)
+            # Cached complexity - reduced penalty for moderate complexity
+            complexity = pop_manager.get_expression_complexity(expr)
+            complexity_penalty = parsimony_coefficient * complexity
             
-            # Stability penalty (vectorized)
+            # Stability penalty (vectorized) - more aggressive for unstable solutions
             stability_penalty = 0.0
             max_abs_pred = np.max(np.abs(predictions))
             
-            if max_abs_pred > 1e6:
-                stability_penalty = 0.5
+            if max_abs_pred > 1e8:  # More aggressive for very large values
+                stability_penalty = 2.0
+            elif max_abs_pred > 1e6:
+                stability_penalty = 1.0
             elif max_abs_pred > 1e4:
-                stability_penalty = 0.1
+                stability_penalty = 0.2
             
             if np.any(~np.isfinite(predictions)):
-                stability_penalty += 1.0
+                stability_penalty += 2.0  # Heavily penalize infinite/NaN
             
-            # Simplified diversity bonus (avoid O(n²) calculation)
+            # Reduced diversity bonus to focus more on fitness
             fitness = -mse - complexity_penalty - stability_penalty + base_diversity_bonus
             fitness_scores.append(float(fitness))
             

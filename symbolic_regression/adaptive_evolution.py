@@ -11,31 +11,31 @@ def update_adaptive_parameters(self, generation: int, diversity_score: float, pl
                                current_mutation_rate: float, current_crossover_rate: float,
                                stagnation_counter: int):
   """Enhanced adaptive parameter updates"""
-  # Base adaptation based on diversity and stagnation
+  # Base adaptation based on diversity and stagnation - more conservative
   if diversity_score < diversity_threshold:
-    # Low diversity - increase exploration
-    mutation_multiplier = 1.0 + (diversity_threshold - diversity_score) * 2.0
-    crossover_multiplier = 0.9
+    # Low diversity - increase exploration moderately
+    mutation_multiplier = 1.0 + (diversity_threshold - diversity_score) * 1.0  # Reduced from 2.0
+    crossover_multiplier = 0.95  # Less aggressive reduction
   else:
     # Good diversity - normal rates
     mutation_multiplier = 1.0
     crossover_multiplier = 1.0
 
-  # Additional adaptation based on plateau
-  if plateau_counter > 15:
-    mutation_multiplier *= 1.5
-    crossover_multiplier *= 0.8
-  elif plateau_counter > 10:
-    mutation_multiplier *= 1.2
+  # Additional adaptation based on plateau - more conservative
+  if plateau_counter > 20:  # Increased threshold
+    mutation_multiplier *= 1.3  # Reduced from 1.5
+    crossover_multiplier *= 0.85  # Less aggressive
+  elif plateau_counter > 15:  # Increased threshold
+    mutation_multiplier *= 1.1  # Reduced from 1.2
 
   # Apply multipliers with bounds
-  new_mutation_rate = np.clip(mutation_rate * mutation_multiplier, 0.05, 0.5)
-  new_crossover_rate = np.clip(crossover_rate * crossover_multiplier, 0.5, 0.95)
+  new_mutation_rate = np.clip(mutation_rate * mutation_multiplier, 0.05, 0.4)  # Reduced max
+  new_crossover_rate = np.clip(crossover_rate * crossover_multiplier, 0.6, 0.95)  # Increased min
 
-  # Gradually return to original rates when performing well
-  if stagnation_counter < 5 and plateau_counter < 5:
-    new_mutation_rate = (current_mutation_rate * 0.95 + mutation_rate * 0.05)
-    new_crossover_rate = (current_crossover_rate * 0.95 + crossover_rate * 0.05)
+  # More gradual return to original rates when performing well
+  if stagnation_counter < 3 and plateau_counter < 3:  # Stricter condition
+    new_mutation_rate = (current_mutation_rate * 0.98 + mutation_rate * 0.02)  # Slower adaptation
+    new_crossover_rate = (current_crossover_rate * 0.98 + crossover_rate * 0.02)
   else:
     new_mutation_rate = current_mutation_rate
     new_crossover_rate = current_crossover_rate

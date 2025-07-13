@@ -224,8 +224,8 @@ class MIMOSymbolicRegressor:
           self.current_mutation_rate, self.current_crossover_rate, self.stagnation_counter
         )
 
-      # Handle long-term stagnation with population restart - more aggressive threshold
-      if self.stagnation_counter >= 15:  # Reduced from 25 to 15 for earlier restart
+      # Handle long-term stagnation with population restart - more conservative threshold
+      if self.stagnation_counter >= 25:  # Restored to original 25 for later restart
         if self.console_log:
           print(f"Population restart at generation {generation} (stagnation: {self.stagnation_counter})")
         population = restart_population_enhanced(population, fitness_scores, generator, self.population_size, self.n_inputs, self.pop_manager)
@@ -233,18 +233,18 @@ class MIMOSymbolicRegressor:
         plateau_counter = 0
         continue
 
-      # Enhanced diversity injection for moderate stagnation - much more aggressive
-      if diversity_score < 0.5:  # Immediate intervention when diversity drops below 0.5
+      # Enhanced diversity injection for moderate stagnation - more conservative
+      if diversity_score < 0.3:  # Only intervene when diversity is very low
         population = inject_diversity_optimized(
-          population, fitness_scores, generator, 0.6,  # Inject 60% new diverse expressions
+          population, fitness_scores, generator, 0.25,  # Inject 25% new diverse expressions
           self.pop_manager,
           self.stagnation_counter, self.console_log
         )
         if self.console_log:
           print(f"Emergency diversity injection at generation {generation} (diversity={diversity_score:.3f})")
-      elif self.stagnation_counter > 5 and diversity_score < 0.65:  # Earlier intervention
+      elif self.stagnation_counter > 8 and diversity_score < 0.5:  # Later intervention
         population = inject_diversity_optimized(
-          population, fitness_scores, generator, 0.4,  # Standard injection rate
+          population, fitness_scores, generator, 0.15,  # Reduced injection rate
           self.pop_manager,
           self.stagnation_counter, self.console_log
         )
@@ -254,18 +254,27 @@ class MIMOSymbolicRegressor:
       # Enhanced reproduction with multiple strategies
       new_population = []
       
-      # Elite preservation
-      elite_count = max(1, int(self.elite_fraction * self.population_size))
+      # Elite preservation - increase elite fraction during stagnation
+      base_elite_fraction = self.elite_fraction
+      if self.stagnation_counter > 10:
+        elite_fraction = min(0.25, base_elite_fraction * 1.5)  # Increase elites during stagnation
+      else:
+        elite_fraction = base_elite_fraction
+        
+      elite_count = max(1, int(elite_fraction * self.population_size))
       elite_indices = np.argsort(fitness_scores)[-elite_count:]
       for idx in elite_indices:
         new_population.append(population[idx].copy())
       
-      # Generate rest of population through crossover and mutation
+      # Generate rest of population through improved selection
+      from .selection import enhanced_selection, tournament_selection
       while len(new_population) < self.population_size:
         if len(new_population) + 1 < self.population_size and np.random.random() < self.current_crossover_rate:
-          # Crossover
-          parent1 = population[np.random.choice(len(population))]
-          parent2 = population[np.random.choice(len(population))]
+          # Crossover with better parent selection
+          parent1 = enhanced_selection(population, fitness_scores, diversity_score, 
+                                     self.diversity_threshold, self.tournament_size, self.stagnation_counter)
+          parent2 = enhanced_selection(population, fitness_scores, diversity_score, 
+                                     self.diversity_threshold, self.tournament_size, self.stagnation_counter)
           child1, child2 = genetic_ops.crossover(parent1, parent2)
           
           if self.pop_manager.is_expression_valid_cached(child1):
@@ -273,8 +282,8 @@ class MIMOSymbolicRegressor:
           if len(new_population) < self.population_size and self.pop_manager.is_expression_valid_cached(child2):
             new_population.append(child2)
         else:
-          # Mutation
-          parent = population[np.random.choice(len(population))]
+          # Mutation with better parent selection
+          parent = tournament_selection(population, fitness_scores, self.tournament_size, self.stagnation_counter)
           child = genetic_ops.mutate(parent, self.current_mutation_rate)
           
           if self.pop_manager.is_expression_valid_cached(child):
