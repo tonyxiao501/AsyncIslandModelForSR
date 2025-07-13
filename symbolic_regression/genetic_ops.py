@@ -99,26 +99,91 @@ class GeneticOperations:
     return unique_strategies
   
   def _analyze_expression_context(self, expression: Expression) -> Dict:
-    """Analyze expression to determine context for mutation strategy selection"""
+    """Advanced expression context analysis for intelligent mutation strategy selection"""
     nodes = self._get_all_nodes(expression.root)
+    
+    if not nodes:
+      return {'complexity': 0, 'depth': 0, 'constant_ratio': 0, 'variable_ratio': 0,
+              'operator_ratio': 0, 'has_repeated_patterns': False, 'node_count': 0,
+              'operator_diversity': 0, 'structural_balance': 0, 'nonlinearity_score': 0,
+              'symmetry_score': 0, 'redundancy_score': 0}
     
     # Count node types
     constants = [n for n in nodes if isinstance(n, ConstantNode)]
     variables = [n for n in nodes if isinstance(n, VariableNode)]
-    operators = [n for n in nodes if isinstance(n, (BinaryOpNode, UnaryOpNode))]
+    binary_ops = [n for n in nodes if isinstance(n, BinaryOpNode)]
+    unary_ops = [n for n in nodes if isinstance(n, UnaryOpNode)]
     
-    # Detect patterns
+    # Advanced pattern detection
     expr_str = expression.to_string()
-    has_repeated_patterns = len(set(expr_str.split())) < len(expr_str.split()) * 0.7
+    
+    # 1. Operator diversity analysis
+    operator_types = set()
+    for node in binary_ops + unary_ops:
+      operator_types.add(node.operator)
+    operator_diversity = len(operator_types) / max(1, len(binary_ops) + len(unary_ops))
+    
+    # 2. Structural balance (tree symmetry and balance)
+    def calculate_subtree_sizes(node):
+      if isinstance(node, (ConstantNode, VariableNode)):
+        return 1
+      elif isinstance(node, UnaryOpNode):
+        return 1 + calculate_subtree_sizes(node.operand)
+      elif isinstance(node, BinaryOpNode):
+        left_size = calculate_subtree_sizes(node.left)
+        right_size = calculate_subtree_sizes(node.right)
+        return 1 + left_size + right_size
+      return 1
+    
+    structural_balance = 0.5  # Default for single nodes
+    if isinstance(expression.root, BinaryOpNode):
+      left_size = calculate_subtree_sizes(expression.root.left)
+      right_size = calculate_subtree_sizes(expression.root.right)
+      total_size = left_size + right_size
+      if total_size > 0:
+        structural_balance = 1.0 - abs(left_size - right_size) / total_size
+    
+    # 3. Nonlinearity score (presence of nonlinear functions)
+    nonlinear_ops = {'sin', 'cos', 'exp', 'log', 'sqrt', 'tan', 'pow'}
+    nonlinear_count = sum(1 for node in binary_ops + unary_ops if node.operator in nonlinear_ops)
+    nonlinearity_score = nonlinear_count / max(1, len(binary_ops) + len(unary_ops))
+    
+    # 4. Improved redundancy detection using AST patterns
+    redundancy_score = self._calculate_redundancy_score(expression.root)
+    
+    # 5. Variable usage symmetry
+    var_usage = {}
+    for node in variables:
+      var_usage[node.index] = var_usage.get(node.index, 0) + 1
+    
+    if var_usage:
+      usage_values = list(var_usage.values())
+      mean_usage = sum(usage_values) / len(usage_values)
+      variance = sum((v - mean_usage) ** 2 for v in usage_values) / len(usage_values)
+      symmetry_score = 1.0 / (1.0 + variance)  # Higher score for balanced variable usage
+    else:
+      symmetry_score = 1.0
+    
+    # 6. Complexity distribution analysis
+    depth = self._calculate_depth(expression.root)
+    complexity = expression.complexity()
     
     return {
-      'complexity': expression.complexity(),
-      'depth': self._calculate_depth(expression.root),
-      'constant_ratio': len(constants) / len(nodes) if nodes else 0,
-      'variable_ratio': len(variables) / len(nodes) if nodes else 0,
-      'operator_ratio': len(operators) / len(nodes) if nodes else 0,
-      'has_repeated_patterns': has_repeated_patterns,
-      'node_count': len(nodes)
+      'complexity': complexity,
+      'depth': depth,
+      'constant_ratio': len(constants) / len(nodes),
+      'variable_ratio': len(variables) / len(nodes),
+      'operator_ratio': (len(binary_ops) + len(unary_ops)) / len(nodes),
+      'has_repeated_patterns': redundancy_score > 0.3,
+      'node_count': len(nodes),
+      'operator_diversity': operator_diversity,
+      'structural_balance': structural_balance,
+      'nonlinearity_score': nonlinearity_score,
+      'symmetry_score': symmetry_score,
+      'redundancy_score': redundancy_score,
+      'is_linear': nonlinearity_score < 0.1,
+      'is_balanced': structural_balance > 0.7,
+      'is_diverse': operator_diversity > 0.5
     }
   
   def _context_aware_mutation(self, expression: Expression, rate: float, 
@@ -220,49 +285,132 @@ class GeneticOperations:
   
   def _semantic_preserving_mutation(self, expression: Expression, rate: float,
                                   X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
-    """Mutation that attempts to preserve semantic meaning while changing structure"""
+    """Advanced mutation that preserves semantic meaning while changing structure"""
     mutated = expression.copy()
     nodes = self._get_all_nodes(mutated.root)
     
     if len(nodes) <= 2:
       return None
     
-    # Try to find semantically equivalent transformations
-    for _ in range(3):  # Try multiple transformations
-      # Look for patterns that can be simplified/transformed
+    # Try sophisticated semantic transformations
+    for _ in range(5):  # More attempts for better success rate
       target_node = random.choice(nodes[1:])  # Skip root
       
       if isinstance(target_node, BinaryOpNode):
-        # Apply algebraic transformations
-        if target_node.operator == '+' and isinstance(target_node.right, ConstantNode):
-          if target_node.right.value == 0:
-            # Remove addition of zero
-            if self._replace_node_in_tree(mutated.root, target_node, target_node.left):
-              mutated.clear_cache()
-              return mutated
+        # Advanced algebraic transformations
+        transformation_applied = False
         
-        elif target_node.operator == '*' and isinstance(target_node.right, ConstantNode):
-          if abs(target_node.right.value - 1.0) < 1e-6:
-            # Remove multiplication by one
+        # Identity transformations
+        if target_node.operator == '+' and isinstance(target_node.right, ConstantNode):
+          if abs(target_node.right.value) < 1e-6:
+            # Remove addition of zero: x + 0 → x
             if self._replace_node_in_tree(mutated.root, target_node, target_node.left):
-              mutated.clear_cache()
-              return mutated
-          elif abs(target_node.right.value) < 1e-6:
-            # Replace multiplication by zero with zero
-            zero_node = ConstantNode(0)
-            if self._replace_node_in_tree(mutated.root, target_node, zero_node):
-              mutated.clear_cache()
-              return mutated
+              transformation_applied = True
+        
+        elif target_node.operator == '*':
+          if isinstance(target_node.right, ConstantNode):
+            if abs(target_node.right.value - 1.0) < 1e-6:
+              # Remove multiplication by one: x * 1 → x
+              if self._replace_node_in_tree(mutated.root, target_node, target_node.left):
+                transformation_applied = True
+            elif abs(target_node.right.value) < 1e-6:
+              # Multiplication by zero: x * 0 → 0
+              zero_node = ConstantNode(0)
+              if self._replace_node_in_tree(mutated.root, target_node, zero_node):
+                transformation_applied = True
+            elif abs(target_node.right.value + 1.0) < 1e-6:
+              # x * (-1) → -x (convert to unary minus if supported)
+              neg_node = UnaryOpNode('-', target_node.left.copy()) if hasattr(UnaryOpNode, '__init__') else None
+              if neg_node and self._replace_node_in_tree(mutated.root, target_node, neg_node):
+                transformation_applied = True
+        
+        elif target_node.operator == '/':
+          if isinstance(target_node.right, ConstantNode):
+            if abs(target_node.right.value - 1.0) < 1e-6:
+              # Division by one: x / 1 → x
+              if self._replace_node_in_tree(mutated.root, target_node, target_node.left):
+                transformation_applied = True
+        
+        elif target_node.operator == '-':
+          if isinstance(target_node.right, ConstantNode) and abs(target_node.right.value) < 1e-6:
+            # Subtraction of zero: x - 0 → x
+            if self._replace_node_in_tree(mutated.root, target_node, target_node.left):
+              transformation_applied = True
+        
+        # Commutative property transformations
+        if not transformation_applied and target_node.operator in ['+', '*']:
+          # Swap operands for commutative operators: a + b → b + a
+          if random.random() < 0.3:
+            target_node.left, target_node.right = target_node.right, target_node.left
+            transformation_applied = True
+        
+        # Distributive property (limited cases)
+        if not transformation_applied and target_node.operator == '*':
+          # Look for patterns like a * (b + c) → a*b + a*c (with probability)
+          if (isinstance(target_node.right, BinaryOpNode) and 
+              target_node.right.operator == '+' and random.random() < 0.2):
+            # Apply distributive property
+            a = target_node.left.copy()
+            b = target_node.right.left.copy()
+            c = target_node.right.right.copy()
+            
+            # Create a*b + a*c
+            ab = BinaryOpNode('*', a.copy(), b)
+            ac = BinaryOpNode('*', a.copy(), c) 
+            distributed = BinaryOpNode('+', ab, ac)
+            
+            if self._replace_node_in_tree(mutated.root, target_node, distributed):
+              transformation_applied = True
+        
+        if transformation_applied:
+          mutated.clear_cache()
+          return mutated
       
       elif isinstance(target_node, UnaryOpNode):
-        # Apply trigonometric identities with low probability
-        if target_node.operator == 'sin' and random.random() < 0.3:
-          # sin(x) can sometimes be replaced with cos(x - π/2) but this is complex
-          # For now, just do simple operator swaps
-          if random.random() < 0.5:
-            target_node.operator = 'cos'
-            mutated.clear_cache()
-            return mutated
+        # Advanced trigonometric and exponential identities
+        transformation_applied = False
+        
+        if target_node.operator == 'sin':
+          if random.random() < 0.2:
+            # sin(x) → cos(x - π/2) - complex, so use simpler transformations
+            # sin(x) ≈ x for small x (first-order approximation, with low probability)
+            if isinstance(target_node.operand, VariableNode) and random.random() < 0.1:
+              if self._replace_node_in_tree(mutated.root, target_node, target_node.operand):
+                transformation_applied = True
+        
+        elif target_node.operator == 'cos':
+          if random.random() < 0.2:
+            # cos(x) → sin(x + π/2) - use sin instead with low probability
+            sin_node = UnaryOpNode('sin', target_node.operand.copy())
+            if self._replace_node_in_tree(mutated.root, target_node, sin_node):
+              transformation_applied = True
+        
+        elif target_node.operator == 'exp':
+          # exp(0) = 1
+          if isinstance(target_node.operand, ConstantNode) and abs(target_node.operand.value) < 1e-6:
+            one_node = ConstantNode(1.0)
+            if self._replace_node_in_tree(mutated.root, target_node, one_node):
+              transformation_applied = True
+        
+        elif target_node.operator == 'log':
+          # log(1) = 0
+          if isinstance(target_node.operand, ConstantNode) and abs(target_node.operand.value - 1.0) < 1e-6:
+            zero_node = ConstantNode(0.0)
+            if self._replace_node_in_tree(mutated.root, target_node, zero_node):
+              transformation_applied = True
+        
+        elif target_node.operator == 'sqrt':
+          # sqrt(x^2) → |x| ≈ x (simplified)
+          if (isinstance(target_node.operand, BinaryOpNode) and 
+              target_node.operand.operator == '*' and
+              target_node.operand.left == target_node.operand.right):
+            # sqrt(x*x) → x
+            if self._replace_node_in_tree(mutated.root, target_node, target_node.operand.left):
+              transformation_applied = True
+        
+        if transformation_applied:
+          mutated.clear_cache()
+          return mutated
     
     return None
   
@@ -553,11 +701,58 @@ class GeneticOperations:
     return selected
 
   def _structural_distance(self, expr1: Expression, expr2: Expression) -> float:
-    """Calculate structural distance between two expressions"""
-    # Simple structural distance based on size and string comparison
-    size_diff = abs(expr1.complexity() - expr2.complexity())
-    string_diff = len(set(expr1.to_string()) ^ set(expr2.to_string()))
-    return size_diff + string_diff * 0.1
+    """Calculate advanced structural distance between two expressions"""
+    try:
+      # 1. Size-based distance
+      size1, size2 = expr1.complexity(), expr2.complexity()
+      size_diff = abs(size1 - size2) / max(1, max(size1, size2))
+      
+      # 2. Depth-based distance  
+      depth1 = self._calculate_depth(expr1.root)
+      depth2 = self._calculate_depth(expr2.root)
+      depth_diff = abs(depth1 - depth2) / max(1, max(depth1, depth2))
+      
+      # 3. Operator signature distance
+      ops1 = self._get_operator_signature(expr1.root)
+      ops2 = self._get_operator_signature(expr2.root)
+      
+      # Calculate Jaccard distance for operator sets
+      union = set(ops1.keys()) | set(ops2.keys())
+      intersection_count = sum(min(ops1.get(op, 0), ops2.get(op, 0)) for op in union)
+      union_count = sum(max(ops1.get(op, 0), ops2.get(op, 0)) for op in union)
+      
+      operator_distance = 1.0 - (intersection_count / max(1, union_count))
+      
+      # 4. Tree shape distance (using tree edit distance approximation)
+      shape_distance = self._approximate_tree_edit_distance(expr1.root, expr2.root)
+      
+      # 5. Semantic distance (if expressions are different but evaluate similarly)
+      semantic_distance = 0.0
+      try:
+        test_points = np.random.randn(10, self.n_inputs)
+        vals1 = expr1.evaluate(test_points)
+        vals2 = expr2.evaluate(test_points)
+        if vals1 is not None and vals2 is not None:
+          correlation = np.corrcoef(vals1.flatten(), vals2.flatten())[0, 1]
+          if not np.isnan(correlation):
+            semantic_distance = 1.0 - abs(correlation)
+      except:
+        semantic_distance = 1.0  # Default high distance if evaluation fails
+      
+      # Combine distances with weights
+      total_distance = (
+        0.2 * size_diff +
+        0.15 * depth_diff + 
+        0.3 * operator_distance +
+        0.25 * shape_distance +
+        0.1 * semantic_distance
+      )
+      
+      return min(1.0, total_distance)
+      
+    except Exception:
+      # Fallback to simple distance
+      return abs(expr1.complexity() - expr2.complexity()) / max(1, max(expr1.complexity(), expr2.complexity()))
 
   def _evaluate_fitness(self, expr: Expression, X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None, parsimony_coefficient: float = 0.001) -> float:
     """
@@ -679,3 +874,102 @@ class GeneticOperations:
       stats[f"{strategy}_success_rate"] = successes / attempts
       stats[f"{strategy}_attempts"] = attempts
     return stats
+
+  def _calculate_redundancy_score(self, root: Node) -> float:
+    """Calculate redundancy score based on repeated subtree patterns"""
+    try:
+      # Get all subtrees and their string representations
+      subtrees = []
+      
+      def collect_subtrees(node):
+        if isinstance(node, (ConstantNode, VariableNode)):
+          subtrees.append(node.to_string() if hasattr(node, 'to_string') else str(node))
+        elif isinstance(node, UnaryOpNode):
+          subtree_str = f"{node.operator}({node.operand.to_string() if hasattr(node.operand, 'to_string') else str(node.operand)})"
+          subtrees.append(subtree_str)
+          collect_subtrees(node.operand)
+        elif isinstance(node, BinaryOpNode):
+          left_str = node.left.to_string() if hasattr(node.left, 'to_string') else str(node.left)
+          right_str = node.right.to_string() if hasattr(node.right, 'to_string') else str(node.right)
+          subtree_str = f"({left_str} {node.operator} {right_str})"
+          subtrees.append(subtree_str)
+          collect_subtrees(node.left)
+          collect_subtrees(node.right)
+      
+      collect_subtrees(root)
+      
+      if len(subtrees) <= 1:
+        return 0.0
+      
+      # Count frequency of each subtree pattern
+      from collections import Counter
+      subtree_counts = Counter(subtrees)
+      
+      # Calculate redundancy as ratio of repeated subtrees
+      total_subtrees = len(subtrees)
+      unique_subtrees = len(subtree_counts)
+      repeated_count = sum(count - 1 for count in subtree_counts.values() if count > 1)
+      
+      redundancy_score = repeated_count / max(1, total_subtrees)
+      return min(1.0, redundancy_score)
+      
+    except Exception:
+      # Fallback to simple string-based redundancy
+      expr_str = str(root)
+      tokens = expr_str.split()
+      if len(tokens) <= 1:
+        return 0.0
+      unique_tokens = len(set(tokens))
+      redundancy = 1.0 - (unique_tokens / len(tokens))
+      return max(0.0, redundancy)
+
+  def _get_operator_signature(self, node: Node) -> Dict[str, int]:
+    """Get operator frequency signature for a tree"""
+    signature = {}
+    
+    def collect_operators(n):
+      if isinstance(n, BinaryOpNode):
+        signature[f"binary_{n.operator}"] = signature.get(f"binary_{n.operator}", 0) + 1
+        collect_operators(n.left)
+        collect_operators(n.right)
+      elif isinstance(n, UnaryOpNode):
+        signature[f"unary_{n.operator}"] = signature.get(f"unary_{n.operator}", 0) + 1
+        collect_operators(n.operand)
+      elif isinstance(n, ConstantNode):
+        signature["constant"] = signature.get("constant", 0) + 1
+      elif isinstance(n, VariableNode):
+        signature[f"var_{n.index}"] = signature.get(f"var_{n.index}", 0) + 1
+    
+    collect_operators(node)
+    return signature
+  
+  def _approximate_tree_edit_distance(self, node1: Node, node2: Node) -> float:
+    """Approximate tree edit distance using recursive structure comparison"""
+    try:
+      # Base cases
+      if type(node1) != type(node2):
+        return 1.0
+      
+      if isinstance(node1, ConstantNode) and isinstance(node2, ConstantNode):
+        # Normalized difference between constants
+        diff = abs(node1.value - node2.value)
+        return min(1.0, diff / (1.0 + max(abs(node1.value), abs(node2.value))))
+      
+      if isinstance(node1, VariableNode) and isinstance(node2, VariableNode):
+        return 0.0 if node1.index == node2.index else 1.0
+      
+      if isinstance(node1, BinaryOpNode) and isinstance(node2, BinaryOpNode):
+        op_diff = 0.0 if node1.operator == node2.operator else 0.5
+        left_diff = self._approximate_tree_edit_distance(node1.left, node2.left)
+        right_diff = self._approximate_tree_edit_distance(node1.right, node2.right)
+        return (op_diff + left_diff + right_diff) / 3.0
+      
+      if isinstance(node1, UnaryOpNode) and isinstance(node2, UnaryOpNode):
+        op_diff = 0.0 if node1.operator == node2.operator else 0.5
+        operand_diff = self._approximate_tree_edit_distance(node1.operand, node2.operand)
+        return (op_diff + operand_diff) / 2.0
+      
+      return 1.0  # Different node types
+      
+    except Exception:
+      return 1.0  # Default high distance for errors
