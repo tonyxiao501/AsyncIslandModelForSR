@@ -1,6 +1,6 @@
 import numpy as np
 import random
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Callable
 
 from .quality_assessment import calculate_subtree_qualities
 from .expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
@@ -9,32 +9,299 @@ from .generator import ExpressionGenerator
 
 
 class GeneticOperations:
-  """Enhanced genetic operations with better diversity preservation"""
+  """Enhanced genetic operations with Grammatical Evolution-inspired improvements"""
 
   def __init__(self, n_inputs: int, max_complexity: int = 20):
     self.n_inputs = n_inputs
     self.max_complexity = max_complexity
     self.generator = ExpressionGenerator(n_inputs)
+    
+    # Context-aware mutation tracking
+    self.mutation_success_rates = {
+      'point': 0.5,
+      'subtree': 0.3,
+      'insert': 0.2,
+      'context_aware': 0.4,
+      'semantic_preserving': 0.3,
+      'legacy_simplify': 0.2
+    }
+    self.mutation_attempts = {key: 1 for key in self.mutation_success_rates}
+    self.mutation_successes = {key: 1 for key in self.mutation_success_rates}
 
-  def mutate(self, expression: Expression, mutation_rate: float = 0.1) -> Expression:
-    """Mutate an expression with better exploration"""
-    # Try different mutation strategies
-    strategies = [
-      self._point_mutation,
-      self._subtree_mutation,
-      self._insert_mutation,
-      self._simplify_mutation
-    ]
-
-    for strategy in strategies:
-      mutated = strategy(expression, mutation_rate)
+  def mutate(self, expression: Expression, mutation_rate: float = 0.1, X: Optional[np.ndarray] = None, 
+             y: Optional[np.ndarray] = None) -> Expression:
+    """Enhanced mutation with Grammatical Evolution-inspired context awareness"""
+    
+    # Update success rates for adaptive strategy selection
+    self._update_success_rates()
+    
+    # Context-aware strategy selection based on expression characteristics
+    strategies = self._select_mutation_strategies(expression, X, y)
+    
+    # Try strategies in order of predicted success
+    for strategy_name, strategy_func in strategies:
+      self.mutation_attempts[strategy_name] += 1
+      
+      mutated = strategy_func(expression, mutation_rate, X, y)
       if mutated and mutated.complexity() <= self.max_complexity:
-        return mutated
-
-    # Fallback to original with small constant perturbation
+        # Verify the mutation improves or maintains fitness
+        if self._is_beneficial_mutation(expression, mutated, X, y):
+          self.mutation_successes[strategy_name] += 1
+          return mutated
+    
+    # Fallback to safe constant mutation
     return self._safe_constant_mutation(expression)
+  
+  def _select_mutation_strategies(self, expression: Expression, X: Optional[np.ndarray] = None, 
+                                y: Optional[np.ndarray] = None) -> List[Tuple[str, Callable]]:
+    """Select and order mutation strategies based on context and success rates"""
+    
+    # Analyze expression characteristics
+    context = self._analyze_expression_context(expression)
+    
+    # Build strategy list with priorities
+    strategies = []
+    
+    # High complexity expressions benefit from simplification
+    if context['complexity'] > self.max_complexity * 0.7:
+      strategies.append(('semantic_preserving', self._semantic_preserving_mutation))
+      strategies.append(('legacy_simplify', self._legacy_simplify_mutation))
+    
+    # Low diversity expressions need more radical changes
+    if context['has_repeated_patterns']:
+      strategies.append(('context_aware', self._context_aware_mutation))
+      strategies.append(('subtree', self._legacy_subtree_mutation))
+    
+    # Expressions with many constants benefit from constant optimization
+    if context['constant_ratio'] > 0.3:
+      strategies.append(('point', self._legacy_point_mutation))
+    
+    # Always include standard strategies, ordered by success rate
+    standard_strategies = [
+      ('context_aware', self._context_aware_mutation),
+      ('point', self._legacy_point_mutation),
+      ('subtree', self._legacy_subtree_mutation),
+      ('insert', self._legacy_insert_mutation)
+    ]
+    
+    # Sort by success rate
+    standard_strategies.sort(key=lambda x: self.mutation_success_rates.get(x[0], 0.1), reverse=True)
+    strategies.extend(standard_strategies)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_strategies = []
+    for name, func in strategies:
+      if name not in seen:
+        unique_strategies.append((name, func))
+        seen.add(name)
+    
+    return unique_strategies
+  
+  def _analyze_expression_context(self, expression: Expression) -> Dict:
+    """Analyze expression to determine context for mutation strategy selection"""
+    nodes = self._get_all_nodes(expression.root)
+    
+    # Count node types
+    constants = [n for n in nodes if isinstance(n, ConstantNode)]
+    variables = [n for n in nodes if isinstance(n, VariableNode)]
+    operators = [n for n in nodes if isinstance(n, (BinaryOpNode, UnaryOpNode))]
+    
+    # Detect patterns
+    expr_str = expression.to_string()
+    has_repeated_patterns = len(set(expr_str.split())) < len(expr_str.split()) * 0.7
+    
+    return {
+      'complexity': expression.complexity(),
+      'depth': self._calculate_depth(expression.root),
+      'constant_ratio': len(constants) / len(nodes) if nodes else 0,
+      'variable_ratio': len(variables) / len(nodes) if nodes else 0,
+      'operator_ratio': len(operators) / len(nodes) if nodes else 0,
+      'has_repeated_patterns': has_repeated_patterns,
+      'node_count': len(nodes)
+    }
+  
+  def _context_aware_mutation(self, expression: Expression, rate: float, 
+                            X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
+    """Context-aware mutation that considers the semantic role of nodes"""
+    mutated = expression.copy()
+    nodes = self._get_all_nodes(mutated.root)
+    
+    if len(nodes) <= 1:
+      return None
+    
+    # Analyze node importance if data is available
+    node_importance = {}
+    if X is not None and y is not None:
+      try:
+        # Calculate gradient/sensitivity for each node
+        for i, node in enumerate(nodes):
+          if isinstance(node, ConstantNode):
+            # Test sensitivity to constant changes
+            original_value = node.value
+            node.value += 0.01
+            pred_plus = expression.evaluate(X)
+            node.value = original_value - 0.01  
+            pred_minus = expression.evaluate(X)
+            node.value = original_value
+            
+            sensitivity = np.mean(np.abs(pred_plus - pred_minus))
+            node_importance[i] = sensitivity
+          else:
+            node_importance[i] = 1.0  # Default importance
+      except:
+        # Fallback to uniform importance
+        node_importance = {i: 1.0 for i in range(len(nodes))}
+    else:
+      node_importance = {i: 1.0 for i in range(len(nodes))}
+    
+    # Select nodes for mutation based on importance (lower importance = higher mutation probability)
+    total_importance = sum(node_importance.values())
+    mutation_probs = {i: (total_importance - imp) / (total_importance * len(nodes)) 
+                     for i, imp in node_importance.items()}
+    
+    changed = False
+    for i, node in enumerate(nodes):
+      if random.random() < mutation_probs.get(i, rate):
+        if isinstance(node, ConstantNode):
+          # Smart constant mutation based on sensitivity
+          sensitivity = node_importance.get(i, 1.0)
+          mutation_scale = 0.1 / (sensitivity + 0.01)  # Less sensitive nodes get larger mutations
+          
+          if random.random() < 0.7:
+            node.value += random.gauss(0, abs(node.value) * mutation_scale + 0.1)
+          else:
+            node.value = random.uniform(-3, 3)
+          changed = True
+          
+        elif isinstance(node, (BinaryOpNode, UnaryOpNode)):
+          # Grammar-aware operator mutation
+          if isinstance(node, BinaryOpNode):
+            # Group operators by semantic similarity
+            arithmetic_ops = ['+', '-', '*', '/']
+            current_op = node.operator
+            if current_op in arithmetic_ops:
+              # Prefer semantically similar operators
+              if random.random() < 0.7:
+                similar_ops = [op for op in arithmetic_ops if op != current_op]
+                node.operator = random.choice(similar_ops) if similar_ops else current_op
+              else:
+                node.operator = random.choice(arithmetic_ops)
+              changed = True
+          
+          elif isinstance(node, UnaryOpNode):
+            # Group unary operators
+            trig_ops = ['sin', 'cos']
+            other_ops = ['exp', 'log', 'sqrt']
+            current_op = node.operator
+            
+            if current_op in trig_ops and random.random() < 0.8:
+              new_ops = [op for op in trig_ops if op != current_op]
+              if new_ops:
+                node.operator = random.choice(new_ops)
+                changed = True
+            elif current_op in other_ops and random.random() < 0.6:
+              new_ops = [op for op in other_ops if op != current_op]
+              if new_ops:
+                node.operator = random.choice(new_ops)
+                changed = True
+            else:
+              # Cross-group mutation with lower probability
+              all_ops = ['sin', 'cos', 'exp', 'log', 'sqrt']
+              new_ops = [op for op in all_ops if op != current_op]
+              if new_ops:
+                node.operator = random.choice(new_ops)
+                changed = True
+    
+    if changed:
+      mutated.clear_cache()
+      return mutated
+    return None
+  
+  def _semantic_preserving_mutation(self, expression: Expression, rate: float,
+                                  X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
+    """Mutation that attempts to preserve semantic meaning while changing structure"""
+    mutated = expression.copy()
+    nodes = self._get_all_nodes(mutated.root)
+    
+    if len(nodes) <= 2:
+      return None
+    
+    # Try to find semantically equivalent transformations
+    for _ in range(3):  # Try multiple transformations
+      # Look for patterns that can be simplified/transformed
+      target_node = random.choice(nodes[1:])  # Skip root
+      
+      if isinstance(target_node, BinaryOpNode):
+        # Apply algebraic transformations
+        if target_node.operator == '+' and isinstance(target_node.right, ConstantNode):
+          if target_node.right.value == 0:
+            # Remove addition of zero
+            if self._replace_node_in_tree(mutated.root, target_node, target_node.left):
+              mutated.clear_cache()
+              return mutated
+        
+        elif target_node.operator == '*' and isinstance(target_node.right, ConstantNode):
+          if abs(target_node.right.value - 1.0) < 1e-6:
+            # Remove multiplication by one
+            if self._replace_node_in_tree(mutated.root, target_node, target_node.left):
+              mutated.clear_cache()
+              return mutated
+          elif abs(target_node.right.value) < 1e-6:
+            # Replace multiplication by zero with zero
+            zero_node = ConstantNode(0)
+            if self._replace_node_in_tree(mutated.root, target_node, zero_node):
+              mutated.clear_cache()
+              return mutated
+      
+      elif isinstance(target_node, UnaryOpNode):
+        # Apply trigonometric identities with low probability
+        if target_node.operator == 'sin' and random.random() < 0.3:
+          # sin(x) can sometimes be replaced with cos(x - π/2) but this is complex
+          # For now, just do simple operator swaps
+          if random.random() < 0.5:
+            target_node.operator = 'cos'
+            mutated.clear_cache()
+            return mutated
+    
+    return None
+  
+  def _calculate_depth(self, node: Node) -> int:
+    """Calculate the depth of a node tree"""
+    if isinstance(node, (ConstantNode, VariableNode)):
+      return 1
+    elif isinstance(node, UnaryOpNode):
+      return 1 + self._calculate_depth(node.operand)
+    elif isinstance(node, BinaryOpNode):
+      return 1 + max(self._calculate_depth(node.left), self._calculate_depth(node.right))
+    return 1
+  
+  def _is_beneficial_mutation(self, original: Expression, mutated: Expression,
+                            X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> bool:
+    """Check if a mutation is beneficial (maintains or improves fitness)"""
+    if X is None or y is None:
+      return True  # Accept if we can't evaluate
+    
+    try:
+      original_fitness = self._evaluate_fitness(original, X, y)
+      mutated_fitness = self._evaluate_fitness(mutated, X, y)
+      
+      # Accept if fitness is maintained or improved, or with small probability for exploration
+      return mutated_fitness >= original_fitness - 0.01 or random.random() < 0.1
+    except:
+      return True  # Accept if evaluation fails
+  
+  def _update_success_rates(self):
+    """Update success rates for adaptive strategy selection"""
+    for strategy in self.mutation_success_rates:
+      if self.mutation_attempts[strategy] > 0:
+        success_rate = self.mutation_successes[strategy] / self.mutation_attempts[strategy]
+        # Exponential moving average
+        self.mutation_success_rates[strategy] = 0.9 * self.mutation_success_rates[strategy] + 0.1 * success_rate
 
-  def _point_mutation(self, expression: Expression, rate: float) -> Optional[Expression]:
+  # Legacy methods preserved for compatibility
+  def _legacy_point_mutation(self, expression: Expression, rate: float, 
+                            X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
     """Point mutation - modify constants and operators"""
     mutated = expression.copy()
     nodes = self._get_all_nodes(mutated.root)
@@ -67,7 +334,8 @@ class GeneticOperations:
       return mutated
     return None
 
-  def _subtree_mutation(self, expression: Expression, rate: float) -> Optional[Expression]:
+  def _legacy_subtree_mutation(self, expression: Expression, rate: float,
+                              X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
     """Replace a subtree with a new random subtree"""
     mutated = expression.copy()
     nodes = self._get_all_nodes(mutated.root)
@@ -88,7 +356,8 @@ class GeneticOperations:
       return mutated
     return None
 
-  def _insert_mutation(self, expression: Expression, rate: float) -> Optional[Expression]:
+  def _legacy_insert_mutation(self, expression: Expression, rate: float,
+                             X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
     """Insert a new operation around an existing node"""
     if expression.complexity() >= self.max_complexity - 2:
       return None
@@ -117,7 +386,8 @@ class GeneticOperations:
       return mutated
     return None
 
-  def _simplify_mutation(self, expression: Expression, rate: float) -> Optional[Expression]:
+  def _legacy_simplify_mutation(self, expression: Expression, rate: float,
+                               X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
     """Apply simplification rules"""
     simplified_root = ExpressionSimplifier.simplify_expression(expression.root)
     if simplified_root and simplified_root != expression.root:
@@ -315,9 +585,8 @@ class GeneticOperations:
       return float(fitness)
     except Exception:
       return -1e8
-  # In genetic_ops.py, inside the GeneticOperations class
 
-def quality_guided_crossover(self, parent1: Expression, parent2: Expression, X: np.ndarray, residuals1: np.ndarray, residuals2: np.ndarray) -> Tuple[Expression, Expression]:
+  def quality_guided_crossover(self, parent1: Expression, parent2: Expression, X: np.ndarray, residuals1: np.ndarray, residuals2: np.ndarray) -> Tuple[Expression, Expression]:
     """
     Performs crossover by probabilistically swapping high-quality subtrees.
     """
@@ -363,3 +632,50 @@ def quality_guided_crossover(self, parent1: Expression, parent2: Expression, X: 
     child2.clear_cache()
 
     return child1, child2
+  
+  def adaptive_mutate_with_feedback(self, expression: Expression, mutation_rate: float = 0.1, 
+                                   X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None,
+                                   generation: int = 0, stagnation_count: int = 0) -> Expression:
+    """Enhanced mutation with adaptive strategy selection based on evolution state"""
+    
+    # Adjust mutation aggressiveness based on stagnation
+    if stagnation_count > 15:
+      # High stagnation - use more aggressive mutations
+      mutation_rate *= 1.5
+      aggressive_strategies = [
+        ('context_aware', self._context_aware_mutation),
+        ('subtree', self._legacy_subtree_mutation),
+        ('semantic_preserving', self._semantic_preserving_mutation)
+      ]
+      
+      for strategy_name, strategy_func in aggressive_strategies:
+        mutated = strategy_func(expression, mutation_rate, X, y)
+        if mutated and mutated.complexity() <= self.max_complexity:
+          return mutated
+    
+    elif stagnation_count > 8:
+      # Medium stagnation - prefer structure-changing mutations
+      mutation_rate *= 1.2
+      medium_strategies = [
+        ('context_aware', self._context_aware_mutation),
+        ('insert', self._legacy_insert_mutation),
+        ('subtree', self._legacy_subtree_mutation)
+      ]
+      
+      for strategy_name, strategy_func in medium_strategies:
+        mutated = strategy_func(expression, mutation_rate, X, y)
+        if mutated and mutated.complexity() <= self.max_complexity:
+          return mutated
+    
+    # Normal mutation using the standard adaptive approach
+    return self.mutate(expression, mutation_rate, X, y)
+  
+  def get_mutation_statistics(self) -> Dict[str, float]:
+    """Get statistics about mutation strategy success rates"""
+    stats = {}
+    for strategy in self.mutation_success_rates:
+      attempts = self.mutation_attempts.get(strategy, 1)
+      successes = self.mutation_successes.get(strategy, 0)
+      stats[f"{strategy}_success_rate"] = successes / attempts
+      stats[f"{strategy}_attempts"] = attempts
+    return stats

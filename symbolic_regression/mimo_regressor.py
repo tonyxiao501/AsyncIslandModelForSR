@@ -282,9 +282,11 @@ class MIMOSymbolicRegressor:
           if len(new_population) < self.population_size and self.pop_manager.is_expression_valid_cached(child2):
             new_population.append(child2)
         else:
-          # Mutation with better parent selection
+          # Mutation with better parent selection and context-aware mutations
           parent = tournament_selection(population, fitness_scores, self.tournament_size, self.stagnation_counter)
-          child = genetic_ops.mutate(parent, self.current_mutation_rate)
+          child = genetic_ops.adaptive_mutate_with_feedback(
+            parent, self.current_mutation_rate, X, y, generation, self.stagnation_counter
+          )
           
           if self.pop_manager.is_expression_valid_cached(child):
             new_population.append(child)
