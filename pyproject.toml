@@ -31,7 +31,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["symbolic_regression"]
+where = ["."]
 
 [project.scripts]
 example-usage = "examples.example_usage:main"

@@ -8,7 +8,7 @@ from symbolic_regression import Expression
 from symbolic_regression.expression_tree import Expression
 from symbolic_regression.expression_tree.core.node import BinaryOpNode, UnaryOpNode, VariableNode, ConstantNode
 from symbolic_regression.generator import ExpressionGenerator
-from utils import calculate_expression_uniqueness
+from .utils import calculate_expression_uniqueness
 
 
 class PopulationManager:
