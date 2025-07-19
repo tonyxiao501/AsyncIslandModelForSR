@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
+import os
+from datetime import datetime
 from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- Use the ensemble version
 
 
@@ -105,67 +107,132 @@ def main():
     r2_individual = r2_score(y_true_test, pred.flatten())
     individual_r2_scores.append(r2_individual)
 
-  # Create visualization with 5 separate plots for candidates
-  fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-  
-  # Plot each of the 5 candidate expressions
+  # Get fitness histories for the top expressions
+  fitness_histories = model.get_fitness_histories()
+
+  # Create output directory with current date and time
+  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+  output_dir = os.path.join("..", f"{timestamp}_fit_result")
+  if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+  print(f"\nSaving plots to directory: {output_dir}")
+
+  # Create 5 separate graphs for each candidate expression
   colors = ['red', 'green', 'orange', 'purple', 'brown']
+  
   for i in range(5):
-    row = i // 3
-    col = i % 3
-    ax = axes[row, col]
-    
     if i < len(individual_predictions):
-      # Plot training data
-      ax.scatter(X_train.flatten(), y_train.flatten(),
-                alpha=0.6, color='lightblue', s=25,
-                label='Training Data', zorder=2)
+      # Create figure with 2 subplots: function plot and fitness plot
+      fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
       
-      # Plot true function
-      ax.plot(X_test.flatten(), y_true_test,
-             color='blue', linewidth=3,
-             label='True Function', zorder=3)
+      # Left subplot: Function plot
+      ax1.scatter(X_train.flatten(), y_train.flatten(),
+                 alpha=0.6, color='lightblue', s=25,
+                 label='Training Data', zorder=2)
       
-      # Plot individual candidate prediction
-      ax.plot(X_test.flatten(), individual_predictions[i],
-             color=colors[i], linewidth=2, linestyle='--',
-             label=f'Candidate {i+1}', zorder=4)
+      ax1.plot(X_test.flatten(), y_true_test,
+              color='blue', linewidth=3,
+              label='True Function', zorder=3)
       
-      ax.set_xlabel('x', fontsize=10)
-      ax.set_ylabel('f(x)', fontsize=10)
-      ax.set_title(f'Candidate {i+1} (R² = {individual_r2_scores[i]:.4f})', fontsize=11, fontweight='bold')
-      ax.grid(True, alpha=0.3)
-      ax.legend(fontsize=8)
+      ax1.plot(X_test.flatten(), individual_predictions[i],
+              color=colors[i], linewidth=2, linestyle='--',
+              label=f'Candidate {i+1}', zorder=4)
+      
+      ax1.set_xlabel('x', fontsize=12)
+      ax1.set_ylabel('f(x)', fontsize=12)
+      ax1.set_title(f'Candidate {i+1} - Function Fit (R² = {individual_r2_scores[i]:.4f})', 
+                   fontsize=14, fontweight='bold')
+      ax1.grid(True, alpha=0.3)
+      ax1.legend(fontsize=10)
       
       # Add expression as text annotation
       expr_text = discovered_expressions[i] if i < len(discovered_expressions) else "N/A"
-      if len(expr_text) > 30:
-        expr_text = expr_text[:27] + "..."
-      ax.text(0.02, 0.98, f'f(x) = {expr_text}', transform=ax.transAxes, fontsize=8,
-             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+      if len(expr_text) > 40:
+        expr_text = expr_text[:37] + "..."
+      ax1.text(0.02, 0.98, f'f(x) = {expr_text}', transform=ax1.transAxes, fontsize=10,
+              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+      
+      # Right subplot: Fitness evolution plot
+      if i < len(fitness_histories) and fitness_histories[i]:
+        generations = range(1, len(fitness_histories[i]) + 1)
+        ax2.plot(generations, fitness_histories[i], color=colors[i], linewidth=2, marker='o', markersize=2)
+        ax2.set_xlabel('Generation', fontsize=12)
+        ax2.set_ylabel('Fitness Score', fontsize=12)
+        ax2.set_title(f'Candidate {i+1} - Fitness Evolution', fontsize=14, fontweight='bold')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xlim(1, len(fitness_histories[i]))
+        
+        # Add final fitness value as text
+        final_fitness = fitness_histories[i][-1]
+        ax2.text(0.98, 0.98, f'Final Fitness: {final_fitness:.6f}', 
+                transform=ax2.transAxes, fontsize=10, ha='right', va='top',
+                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+      else:
+        ax2.text(0.5, 0.5, 'No fitness history available', 
+                transform=ax2.transAxes, fontsize=12, ha='center', va='center')
+        ax2.set_title(f'Candidate {i+1} - Fitness Evolution', fontsize=14, fontweight='bold')
+      
+      plt.tight_layout()
+      
+      # Save the plot
+      filename = f"candidate_{i+1}_analysis.png"
+      filepath = os.path.join(output_dir, filename)
+      plt.savefig(filepath, dpi=300, bbox_inches='tight')
+      print(f"Saved: {filename}")
+      
+      plt.show()
+      plt.close()  # Close figure to free memory
     else:
-      ax.set_title(f'Candidate {i+1} - Not Available')
-      ax.axis('off')
+      print(f"Candidate {i+1}: Not available")
 
-  # Use the 6th subplot for ensemble mean comparison
-  ax_ensemble = axes[1, 2]
-  ax_ensemble.scatter(X_train.flatten(), y_train.flatten(),
-                     alpha=0.6, color='lightblue', s=25,
-                     label='Training Data', zorder=2)
-  ax_ensemble.plot(X_test.flatten(), y_true_test,
-                  color='blue', linewidth=3,
-                  label='True Function', zorder=3)
-  ax_ensemble.plot(X_test.flatten(), y_pred_test.flatten(),
-                  color='black', linewidth=2, linestyle='-',
-                  label='Ensemble Mean', zorder=4)
-  ax_ensemble.set_xlabel('x', fontsize=10)
-  ax_ensemble.set_ylabel('f(x)', fontsize=10)
-  ax_ensemble.set_title(f'Ensemble Mean (R² = {r2_test:.4f})', fontsize=11, fontweight='bold')
-  ax_ensemble.grid(True, alpha=0.3)
-  ax_ensemble.legend(fontsize=8)
-
+  # Create ensemble summary plot
+  fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+  
+  # Left subplot: Ensemble mean comparison
+  ax1.scatter(X_train.flatten(), y_train.flatten(),
+             alpha=0.6, color='lightblue', s=25,
+             label='Training Data', zorder=2)
+  ax1.plot(X_test.flatten(), y_true_test,
+          color='blue', linewidth=3,
+          label='True Function', zorder=3)
+  ax1.plot(X_test.flatten(), y_pred_test.flatten(),
+          color='black', linewidth=2, linestyle='-',
+          label='Ensemble Mean', zorder=4)
+  ax1.set_xlabel('x', fontsize=12)
+  ax1.set_ylabel('f(x)', fontsize=12)
+  ax1.set_title(f'Ensemble Mean Prediction (R² = {r2_test:.4f})', fontsize=14, fontweight='bold')
+  ax1.grid(True, alpha=0.3)
+  ax1.legend(fontsize=10)
+  
+  # Right subplot: R² scores comparison
+  candidate_names = [f'Candidate {i+1}' for i in range(len(individual_r2_scores))]
+  candidate_names.append('Ensemble Mean')
+  r2_values = individual_r2_scores + [r2_test]
+  colors_extended = colors[:len(individual_r2_scores)] + ['black']
+  
+  bars = ax2.bar(candidate_names, r2_values, color=colors_extended, alpha=0.7)
+  ax2.set_ylabel('R² Score', fontsize=12)
+  ax2.set_title('R² Score Comparison', fontsize=14, fontweight='bold')
+  ax2.grid(True, alpha=0.3, axis='y')
+  ax2.set_ylim(0, 1.05)
+  
+  # Add value labels on bars
+  for bar, value in zip(bars, r2_values):
+    height = bar.get_height()
+    ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+            f'{value:.4f}', ha='center', va='bottom', fontsize=10)
+  
+  plt.xticks(rotation=45, ha='right')
   plt.tight_layout()
+  
+  # Save ensemble summary
+  ensemble_filename = "ensemble_summary.png"
+  ensemble_filepath = os.path.join(output_dir, ensemble_filename)
+  plt.savefig(ensemble_filepath, dpi=300, bbox_inches='tight')
+  print(f"Saved: {ensemble_filename}")
+  
   plt.show()
+  plt.close()
 
   print(f"\n{'=' * 70}")
   print("DETAILED ANALYSIS (ENSEMBLE):")
@@ -174,6 +241,7 @@ def main():
   for i, r2 in enumerate(individual_r2_scores):
       print(f"  Candidate {i+1}: {r2:.6f}")
   print(f"Ensemble mean R²: {r2_test:.6f}")
+  print(f"\nAll plots saved to: {output_dir}")
 
 if __name__ == "__main__":
   main()

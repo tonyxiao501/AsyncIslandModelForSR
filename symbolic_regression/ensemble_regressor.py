@@ -116,6 +116,7 @@ class EnsembleMIMORegressor:
 
     # Aggregate valid results from all runs
     all_run_results = []
+    self.fitted_regressors = []  # Store regressor objects for fitness history access
     for i, reg in enumerate(results):
       if reg and reg.best_expressions and reg.best_fitness_history:
         fitness = reg.best_fitness_history[-1]
@@ -125,8 +126,10 @@ class EnsembleMIMORegressor:
           "fitness": fitness,
           "expression_obj": expression,
           "expression_str": expression.to_string(),
-          "complexity": expression.complexity()
+          "complexity": expression.complexity(),
+          "regressor": reg  # Store the regressor object
         })
+        self.fitted_regressors.append(reg)
 
     if not all_run_results:
       print("\nWarning: No valid expressions were found across all runs. The model is not fitted.")
@@ -200,6 +203,22 @@ class EnsembleMIMORegressor:
     if not self.best_expressions:
       return []
     return [expr.to_string() for expr in self.best_expressions]
+
+  def get_fitness_histories(self) -> List[List[float]]:
+    """Returns the fitness histories for the top expressions in the ensemble."""
+    if not hasattr(self, 'fitted_regressors') or not self.fitted_regressors:
+      return []
+    
+    # Get the fitness histories for the top selected expressions
+    fitness_histories = []
+    for i, result in enumerate(self.all_results[:self.top_n_select]):
+      regressor = result.get('regressor')
+      if regressor and hasattr(regressor, 'fitness_history'):
+        fitness_histories.append(regressor.fitness_history.copy())
+      else:
+        fitness_histories.append([])
+    
+    return fitness_histories
 
   def score(self, X: np.ndarray, y: np.ndarray, strategy: str = 'mean') -> float:
     """
