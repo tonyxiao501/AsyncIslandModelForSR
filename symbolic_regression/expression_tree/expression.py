@@ -151,11 +151,15 @@ class Expression:
       return ConstantNode(float(sympy_expr))
 
     # Handle function calls (unary operations)
-    if isinstance(sympy_expr, (sp.sin, sp.cos, sp.exp, sp.log, sp.sqrt)):
+    if isinstance(sympy_expr, (sp.sin, sp.cos, sp.exp, sp.log)):
       func_name = str(type(sympy_expr).__name__).lower()
       if func_name in UNARY_OP_MAP:
         operand = Expression._sympy_to_node(sympy_expr.args[0], n_inputs)
         return UnaryOpNode(func_name, operand)
+    
+    if isinstance(sympy_expr, sp.Pow) and sympy_expr.args[1] == sp.Rational(1, 2):
+      operand = Expression._sympy_to_node(sympy_expr.args[0], n_inputs)
+      return UnaryOpNode('sqrt', operand)
 
     # Handle power operations
     if isinstance(sympy_expr, sp.Pow):
@@ -199,7 +203,7 @@ class Expression:
         # Check if this is actually subtraction (second arg is negative)
         if sympy_expr.args[1].is_negative:
           left = Expression._sympy_to_node(sympy_expr.args[0], n_inputs)
-          right = Expression._sympy_to_node(-sympy_expr.args[1], n_inputs)
+          right = Expression._sympy_to_node(sp.Mul(-1, sympy_expr.args[1]), n_inputs)
           return BinaryOpNode('-', left, right)
 
       if 'Mul' in func_name and len(sympy_expr.args) == 2:
