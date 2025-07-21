@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import time
 from typing import List, Optional, Dict, Any
 from .expression_tree import Expression
 from .generator import ExpressionGenerator
@@ -35,7 +36,11 @@ class MIMOSymbolicRegressor:
                adaptive_rates: bool = True,
                restart_threshold: int = 25,
                elite_fraction: float = 0.1,
-               console_log=True
+               console_log=True,
+               # New optimization control parameters
+               evolution_sympy_simplify: bool = False,  # Disabled during evolution
+               evolution_constant_optimize: bool = False,  # Disabled during evolution
+               final_optimization_generations: int = 5  # Apply optimization in final N generations
                ):
 
     self.population_size = population_size
@@ -49,6 +54,11 @@ class MIMOSymbolicRegressor:
     self.advanced_simplify = advanced_simplify
 
     self.console_log = console_log
+
+    # Optimization control parameters
+    self.evolution_sympy_simplify = evolution_sympy_simplify
+    self.evolution_constant_optimize = evolution_constant_optimize
+    self.final_optimization_generations = final_optimization_generations
 
     # Enhanced evolution parameters
     self.diversity_threshold = diversity_threshold
@@ -330,13 +340,50 @@ class MIMOSymbolicRegressor:
           if self.console_log:
             print(f"Worker {self.worker_id}: Population exchange failed: {e}")
 
-      # Constant Optimize
-      if constant_optimize:
-        optimize_constants(X.squeeze(), y, population, generation - last_update, self.population_size, self.generations)
+      # Constant Optimize - only in final generations or when explicitly enabled
+      apply_constant_optimization = (
+        constant_optimize and 
+        (self.evolution_constant_optimize or generation >= (self.generations - self.final_optimization_generations))
+      )
+      
+      if apply_constant_optimization:
+        from .expression_utils import optimize_constants
+        optimize_constants(X.squeeze(), y, population, generation - last_update, 
+                         self.population_size, self.generations, enable_optimization=True)
 
       # Debug CSV logging - reduced frequency for better performance
       if generation % 10 == 0:  # Only log every 10 generations instead of every generation
         self._write_debug_csv(generation, population, fitness_scores, diversity_score)
+
+    # FINAL OPTIMIZATION PHASE: Apply expensive operations to top expressions only
+    if self.console_log:
+      print(f"\nApplying final optimizations to top expressions...")
+    
+    start_time = time.time()
+    
+    # Get top expressions from final population for optimization
+    final_fitness_scores = evaluate_population_enhanced_optimized(population, X, y, self.parsimony_coefficient, self.pop_manager)
+    top_indices = sorted(range(len(final_fitness_scores)), key=lambda i: final_fitness_scores[i], reverse=True)[:min(10, len(population))]
+    top_expressions = [population[i] for i in top_indices]
+    
+    # Apply final optimizations
+    from .expression_utils import optimize_final_expressions, evaluate_optimized_expressions
+    optimized_expressions = optimize_final_expressions(top_expressions, X, y)
+    
+    # Re-evaluate with optimized constants
+    optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, self.parsimony_coefficient)
+    
+    # Select best expressions based on optimized fitness
+    best_indices = sorted(range(len(optimized_fitness_scores)), key=lambda i: optimized_fitness_scores[i], reverse=True)
+    max_expressions = self.n_outputs if self.n_outputs is not None else 1
+    self.best_expressions = [optimized_expressions[i] for i in best_indices[:min(max_expressions, len(optimized_expressions))]]
+    
+    optimization_time = time.time() - start_time
+    if self.console_log:
+      print(f"Final optimization completed in {optimization_time:.2f}s")
+      improvement_count = sum(1 for i, opt_fitness in enumerate(optimized_fitness_scores) 
+                            if i < len(final_fitness_scores) and opt_fitness > final_fitness_scores[top_indices[i]])
+      print(f"Optimization improved {improvement_count}/{len(optimized_expressions)} expressions")
 
     # Final reporting
     final_best = max(self.fitness_history) if self.fitness_history else -np.inf
@@ -395,7 +442,8 @@ class MIMOSymbolicRegressor:
     for expr in self.best_expressions:
       expr_str = expr.to_string()
       if self.sympy_simplify:
-        simplified = to_sympy_expression(expr_str, self.advanced_simplify, self.n_inputs)
+        from .expression_utils import to_sympy_expression
+        simplified = to_sympy_expression(expr_str, self.advanced_simplify, self.n_inputs, enable_simplify=True)
         expressions.append(simplified if simplified else expr_str)
       else:
         expressions.append(expr_str)

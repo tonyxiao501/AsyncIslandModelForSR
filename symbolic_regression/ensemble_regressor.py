@@ -141,6 +141,42 @@ class EnsembleMIMORegressor:
     # Select the top N best expressions from the aggregated list
     top_results = all_run_results[:self.top_n_select]
 
+    # FINAL OPTIMIZATION PHASE: Apply optimizations to top candidate expressions
+    print(f"\nApplying final optimizations to top {len(top_results)} candidate expressions...")
+    
+    import time
+    start_time = time.time()
+    
+    # Extract expressions for optimization
+    candidate_expressions = [res['expression_obj'] for res in top_results]
+    
+    # Apply final optimizations
+    from .expression_utils import optimize_final_expressions, evaluate_optimized_expressions
+    optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
+    
+    # Re-evaluate with optimized constants and get new fitness scores
+    parsimony_coeff = self.regressor_kwargs.get('parsimony_coefficient', 0.01)
+    optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
+    
+    # Update results with optimized fitness scores and re-rank
+    for i, (optimized_expr, new_fitness) in enumerate(zip(optimized_expressions, optimized_fitness_scores)):
+      if i < len(top_results):
+        top_results[i]['expression_obj'] = optimized_expr
+        top_results[i]['fitness'] = new_fitness
+        top_results[i]['expression_str'] = optimized_expr.to_string()
+        top_results[i]['complexity'] = optimized_expr.complexity()
+    
+    # Re-sort by new optimized fitness scores
+    top_results.sort(key=lambda item: item['fitness'], reverse=True)
+    
+    optimization_time = time.time() - start_time
+    improvement_count = sum(1 for i, new_fitness in enumerate(optimized_fitness_scores) 
+                          if i < len(all_run_results[:self.top_n_select]) and 
+                          new_fitness > all_run_results[i]['fitness'])
+    
+    print(f"Final optimization completed in {optimization_time:.2f}s")
+    print(f"Optimization improved {improvement_count}/{len(optimized_expressions)} expressions")
+
     self.best_expressions = [res['expression_obj'] for res in top_results]
     self.best_fitnesses = [res['fitness'] for res in top_results]
     self.all_results = all_run_results
@@ -152,6 +188,8 @@ class EnsembleMIMORegressor:
             f"Complexity: {res['complexity']:.2f}, "
             f"From Run: {res['run']}, "
             f"Expression: {res['expression_str']}")
+
+    print(f"Final optimization improved {improvement_count} expressions out of {len(top_results)} candidates.")
 
     if self.enable_inter_thread_communication:
       print(f"\nInter-thread communication summary:")
