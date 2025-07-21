@@ -27,7 +27,13 @@ class PhysicsLawTester:
             enable_inter_thread_communication=True,
             purge_percentage=0.15,       
             exchange_interval=15,       
-            import_percentage=0.08
+            import_percentage=0.08,
+            # Critical scaling parameters for physics problems
+            enable_data_scaling=True,
+            use_multi_scale_fitness=True,
+            input_scaling='auto',
+            output_scaling='auto',
+            scaling_target_range=(-5.0, 5.0)
         )
         
         # Initialize results storage

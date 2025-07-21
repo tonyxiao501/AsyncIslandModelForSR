@@ -53,7 +53,9 @@ def main():
     enable_inter_thread_communication=True,
     purge_percentage=0.15,       
     exchange_interval=15,       
-    import_percentage=0.08
+    import_percentage=0.08,
+    enable_data_scaling=False,
+    use_multi_scale_fitness=False
   )
 
   print("\nTraining symbolic regression ensemble model...")

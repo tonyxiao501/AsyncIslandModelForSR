@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import time
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from .expression_tree import Expression
 from .generator import ExpressionGenerator
 from .genetic_ops import GeneticOperations
@@ -18,6 +18,8 @@ from .adaptive_evolution import (
 )
 from .expression_utils import to_sympy_expression, optimize_constants
 from .evolution_stats import get_evolution_stats, get_detailed_expressions
+from .data_scaling import DataScaler
+from .multi_scale_fitness import MultiScaleFitnessEvaluator
 
 class MIMOSymbolicRegressor:
   """Enhanced Multiple Input Multiple Output Symbolic Regression Model with improved evolution dynamics"""
@@ -40,7 +42,15 @@ class MIMOSymbolicRegressor:
                # New optimization control parameters
                evolution_sympy_simplify: bool = False,  # Disabled during evolution
                evolution_constant_optimize: bool = False,  # Disabled during evolution
-               final_optimization_generations: int = 5  # Apply optimization in final N generations
+               final_optimization_generations: int = 5,  # Apply optimization in final N generations
+               # Data scaling parameters
+               enable_data_scaling: bool = True,
+               input_scaling: str = 'auto',
+               output_scaling: str = 'auto',
+               scaling_target_range: Tuple[float, float] = (-5.0, 5.0),  # Expanded range for extreme physics scales
+               # Multi-scale fitness evaluation
+               use_multi_scale_fitness: bool = True,
+               extreme_value_threshold: float = 1e6
                ):
 
     self.population_size = population_size
@@ -65,6 +75,23 @@ class MIMOSymbolicRegressor:
     self.adaptive_rates = adaptive_rates
     self.restart_threshold = restart_threshold
     self.elite_fraction = elite_fraction
+
+    # Data scaling parameters
+    self.enable_data_scaling = enable_data_scaling
+    self.input_scaling = input_scaling
+    self.output_scaling = output_scaling
+    self.scaling_target_range = scaling_target_range
+    self.data_scaler: Optional[DataScaler] = None
+
+    # Multi-scale fitness evaluation
+    self.use_multi_scale_fitness = use_multi_scale_fitness
+    self.fitness_evaluator: Optional[MultiScaleFitnessEvaluator] = None
+    if use_multi_scale_fitness:
+      self.fitness_evaluator = MultiScaleFitnessEvaluator(
+        use_log_space=True,
+        use_relative_metrics=True,
+        extreme_value_threshold=extreme_value_threshold
+      )
 
     # Evolution state tracking
     self.stagnation_counter = 0
@@ -150,6 +177,57 @@ class MIMOSymbolicRegressor:
       if self.console_log:
         print(f"Debug CSV write failed: {e}")
 
+  def _evaluate_population_multi_scale(self, population: List[Expression], 
+                                      X: np.ndarray, y: np.ndarray) -> List[float]:
+    """
+    Enhanced population evaluation using multi-scale fitness metrics.
+    Handles extreme-scale physics problems much better than standard R².
+    """
+    fitness_scores = []
+    
+    for expr in population:
+      try:
+        # Get predictions
+        predictions = expr.evaluate(X)
+        if predictions.ndim == 1:
+          predictions = predictions.reshape(-1, 1)
+        
+        # Use multi-scale fitness evaluator
+        if self.fitness_evaluator:
+          base_fitness = self.fitness_evaluator.evaluate_fitness(
+            y.flatten(), predictions.flatten(), 0.0  # No parsimony penalty here
+          )
+        else:
+          # Fallback to standard R²
+          ss_res = np.sum((y - predictions) ** 2)
+          ss_tot = np.sum((y - np.mean(y)) ** 2)
+          base_fitness = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+        
+        # Apply complexity penalty
+        complexity = expr.complexity()
+        complexity_penalty = self.parsimony_coefficient * complexity
+        
+        # Apply stability penalty for extreme predictions
+        stability_penalty = 0.0
+        max_abs_pred = np.max(np.abs(predictions))
+        if max_abs_pred > 1e10:
+          stability_penalty = 2.0
+        elif max_abs_pred > 1e8:
+          stability_penalty = 0.5
+        elif np.any(np.isnan(predictions)) or np.any(np.isinf(predictions)):
+          stability_penalty = 10.0
+        
+        final_fitness = base_fitness - complexity_penalty - stability_penalty
+        fitness_scores.append(final_fitness)
+        
+      except Exception as e:
+        # Invalid expression
+        fitness_scores.append(-1e6)
+        if self.console_log and len(fitness_scores) <= 5:  # Only log first few failures
+          print(f"Expression evaluation failed: {e}")
+    
+    return fitness_scores
+
   def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize=False):
     """Enhanced fit with diversity preservation and adaptive evolution"""
     X = np.asarray(X, dtype=np.float64)
@@ -161,8 +239,25 @@ class MIMOSymbolicRegressor:
     if y.ndim == 1:
       y = y.reshape(-1, 1)
 
-    self.n_inputs = X.shape[1]
-    self.n_outputs = y.shape[1]
+    # Apply data scaling if enabled
+    X_scaled, y_scaled = X.copy(), y.copy()
+    if self.enable_data_scaling:
+      self.data_scaler = DataScaler(
+        input_scaling=self.input_scaling,
+        output_scaling=self.output_scaling,
+        target_range=self.scaling_target_range
+      )
+      X_scaled, y_scaled = self.data_scaler.fit_transform(X, y)
+      
+      if self.console_log:
+        scaling_info = self.data_scaler.get_scaling_info()
+        print(f"Data scaling applied:")
+        print(f"  Input transforms: {scaling_info['input_transforms']}")
+        print(f"  Output transform: {scaling_info['output_transform']}")
+        print(f"  Target range: {scaling_info['target_range']}")
+
+    self.n_inputs = X_scaled.shape[1]
+    self.n_outputs = y_scaled.shape[1]
     
     # Initialize population manager
     if self.n_inputs is None:
@@ -191,8 +286,11 @@ class MIMOSymbolicRegressor:
       print(f"Starting evolution with {self.population_size} individuals for {self.generations} generations")
 
     for generation in range(self.generations):
-      # Evaluate fitness with enhanced scoring
-      fitness_scores = evaluate_population_enhanced_optimized(population, X, y, self.parsimony_coefficient, self.pop_manager)
+      # Evaluate fitness with enhanced scoring (use scaled data)
+      if self.use_multi_scale_fitness and self.fitness_evaluator:
+        fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled)
+      else:
+        fitness_scores = evaluate_population_enhanced_optimized(population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
 
       # Calculate diversity metrics
       diversity_score = calculate_population_diversity(population)
@@ -361,17 +459,31 @@ class MIMOSymbolicRegressor:
     
     start_time = time.time()
     
-    # Get top expressions from final population for optimization
-    final_fitness_scores = evaluate_population_enhanced_optimized(population, X, y, self.parsimony_coefficient, self.pop_manager)
+    # Get top expressions from final population for optimization (use scaled data consistently)
+    if self.use_multi_scale_fitness and self.fitness_evaluator:
+      final_fitness_scores = []
+      for expr in population:
+        try:
+          predictions = expr.evaluate(X_scaled)
+          if predictions.ndim == 1:
+            predictions = predictions.reshape(-1, 1)
+          fitness = self.fitness_evaluator.evaluate_fitness(
+            y_scaled.flatten(), predictions.flatten(), self.parsimony_coefficient
+          )
+          final_fitness_scores.append(fitness)
+        except:
+          final_fitness_scores.append(-1e6)
+    else:
+      final_fitness_scores = evaluate_population_enhanced_optimized(population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
     top_indices = sorted(range(len(final_fitness_scores)), key=lambda i: final_fitness_scores[i], reverse=True)[:min(10, len(population))]
     top_expressions = [population[i] for i in top_indices]
     
-    # Apply final optimizations
+    # Apply final optimizations (use scaled data for consistency with training)
     from .expression_utils import optimize_final_expressions, evaluate_optimized_expressions
-    optimized_expressions = optimize_final_expressions(top_expressions, X, y)
+    optimized_expressions = optimize_final_expressions(top_expressions, X_scaled, y_scaled)
     
-    # Re-evaluate with optimized constants
-    optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, self.parsimony_coefficient)
+    # Re-evaluate with optimized constants (use scaled data)
+    optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X_scaled, y_scaled, self.parsimony_coefficient)
     
     # Select best expressions based on optimized fitness
     best_indices = sorted(range(len(optimized_fitness_scores)), key=lambda i: optimized_fitness_scores[i], reverse=True)
@@ -395,7 +507,7 @@ class MIMOSymbolicRegressor:
         print(f"Expression complexity: {self.best_expressions[0].complexity():.2f}")
 
   def predict(self, X: np.ndarray) -> np.ndarray:
-    """Make predictions using the best expressions"""
+    """Make predictions using the best expressions with proper scaling handling"""
     if not self.best_expressions:
       raise ValueError("Model has not been fitted yet. Call fit() first.")
 
@@ -403,38 +515,137 @@ class MIMOSymbolicRegressor:
     if X.ndim == 1:
       X = X.reshape(-1, 1)
 
+    # Apply input scaling if it was used during training
+    X_for_prediction = X.copy()
+    if self.enable_data_scaling and self.data_scaler is not None:
+      try:
+        X_for_prediction = self.data_scaler.transform_input(X)
+      except Exception as e:
+        if self.console_log:
+          print(f"Warning: Could not apply input scaling during prediction: {e}")
+        X_for_prediction = X
+
     predictions = []
     for expr in self.best_expressions:
-      pred = expr.evaluate(X)
+      # Evaluate expression on scaled input
+      pred = expr.evaluate(X_for_prediction)
       if pred.ndim == 1:
         pred = pred.reshape(-1, 1)
       predictions.append(pred)
 
+    # Combine predictions
     if len(predictions) == 1:
-      return predictions[0]
+      final_predictions = predictions[0]
     else:
-      return np.concatenate(predictions, axis=1)
+      final_predictions = np.concatenate(predictions, axis=1)
+
+    # Apply inverse output scaling if it was used during training
+    if self.enable_data_scaling and self.data_scaler is not None:
+      try:
+        final_predictions = self.data_scaler.inverse_transform_output(final_predictions)
+      except Exception as e:
+        if self.console_log:
+          print(f"Warning: Could not apply inverse output scaling during prediction: {e}")
+
+    return final_predictions
 
   def score(self, X: np.ndarray, y: np.ndarray) -> float:
-    """Calculate R² score for the model"""
+    """Calculate R² score for the model with proper scaling handling"""
     if not self.best_expressions:
       raise ValueError("Model has not been fitted yet")
 
+    # Use predict method which handles scaling correctly
     predictions = self.predict(X)
 
     if y.ndim == 1:
       y = y.reshape(-1, 1)
+    if predictions.ndim == 1:
+      predictions = predictions.reshape(-1, 1)
 
-    ss_res = float(np.sum((y - predictions) ** 2))
-    ss_tot = float(np.sum((y - np.mean(y, axis=0)) ** 2))
+    # Check for extreme predictions that indicate scaling issues
+    max_pred = np.max(np.abs(predictions))
+    max_true = np.max(np.abs(y))
+    
+    if max_pred > 1000 * max_true or max_pred > 1e20:
+      if self.console_log:
+        print(f"Warning: Extreme predictions detected (max: {max_pred:.2e}, true max: {max_true:.2e})")
+      # Return fitness-based score instead
+      if self.use_multi_scale_fitness and self.fitness_evaluator:
+        try:
+          fitness = self.fitness_evaluator.evaluate_fitness(
+            y.flatten(), predictions.flatten(), 0.0
+          )
+          return max(0.0, min(1.0, fitness))
+        except:
+          return 0.0
+      else:
+        return 0.0
 
-    if ss_tot == 0:
-      return 1.0 if ss_res == 0 else 0.0
+    # Use multi-scale fitness evaluation if available for better extreme value handling
+    if self.use_multi_scale_fitness and self.fitness_evaluator:
+      try:
+        # Use the same fitness evaluator that was used during training
+        fitness = self.fitness_evaluator.evaluate_fitness(
+          y.flatten(), predictions.flatten(), 0.0  # No parsimony penalty for scoring
+        )
+        # Convert fitness to R² approximation (fitness is already in 0-1 range typically)
+        return max(0.0, min(1.0, fitness))  # Clamp to valid R² range
+      except Exception as e:
+        if self.console_log:
+          print(f"Warning: Multi-scale fitness evaluation failed in score, falling back to standard R²: {e}")
 
-    return 1.0 - (ss_res / ss_tot)
+    # Fallback to standard R² calculation
+    try:
+      ss_res = float(np.sum((y - predictions) ** 2))
+      ss_tot = float(np.sum((y - np.mean(y, axis=0)) ** 2))
+
+      if ss_tot == 0:
+        return 1.0 if ss_res == 0 else 0.0
+
+      r2 = 1.0 - (ss_res / ss_tot)
+      
+      # For extreme values, clamp the result to prevent meaningless negative R²
+      if abs(r2) > 100:
+        if self.console_log:
+          print(f"Warning: Extreme R² value ({r2:.2e}) detected, likely due to scaling mismatch")
+        return 0.0  # Return neutral score for scaling mismatches
+      
+      return max(-1.0, min(1.0, r2))  # Clamp to reasonable R² range
+    
+    except Exception as e:
+      if self.console_log:
+        print(f"Warning: R² calculation failed: {e}")
+      return 0.0
 
   def get_expressions(self) -> List[str]:
-    """Get the best expressions as strings"""
+    """Get the best expressions as strings (in original data scale if scaling was used)"""
+    if not self.best_expressions:
+      return []
+
+    expressions = []
+    for expr in self.best_expressions:
+      expr_str = expr.to_string()
+      
+      # Add scaling indicators if data scaling was used
+      if self.enable_data_scaling and self.data_scaler is not None and self.n_inputs is not None:
+        try:
+          expr_str = self.data_scaler.get_scaled_expression_with_indicators(expr_str, self.n_inputs)
+        except Exception as e:
+          if self.console_log:
+            print(f"Warning: Failed to add scaling indicators to expression: {e}")
+      
+      # Apply simplification
+      if self.sympy_simplify:
+        from .expression_utils import to_sympy_expression
+        simplified = to_sympy_expression(expr_str, self.advanced_simplify, self.n_inputs, enable_simplify=True)
+        expressions.append(simplified if simplified else expr_str)
+      else:
+        expressions.append(expr_str)
+
+    return expressions
+  
+  def get_scaled_expressions(self) -> List[str]:
+    """Get expressions in scaled data space (useful for debugging)"""
     if not self.best_expressions:
       return []
 

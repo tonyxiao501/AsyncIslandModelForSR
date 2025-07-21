@@ -199,6 +199,7 @@ class EnsembleMIMORegressor:
   def predict(self, X: np.ndarray, strategy: str = 'mean') -> np.ndarray:
     """
     Makes predictions using the ensemble of best expressions.
+    Handles data scaling if it was used during training.
 
     Args:
         X (np.ndarray): Input data for prediction.
@@ -217,18 +218,39 @@ class EnsembleMIMORegressor:
     if X.ndim == 1:
       X = X.reshape(-1, 1)
 
+    # Check if we have scaling information
+    data_scaler = None
+    if (hasattr(self, 'fitted_regressors') and self.fitted_regressors and 
+        len(self.fitted_regressors) > 0 and hasattr(self.fitted_regressors[0], 'data_scaler')):
+      data_scaler = self.fitted_regressors[0].data_scaler
+
     if strategy == 'best_only':
       # Use only the single best expression (the first in the sorted list)
-      return self.best_expressions[0].evaluate(X)
+      if data_scaler is not None:
+        X_scaled = data_scaler.transform_input(X)
+        y_scaled = self.best_expressions[0].evaluate(X_scaled)
+        return data_scaler.inverse_transform_output(y_scaled)
+      else:
+        return self.best_expressions[0].evaluate(X)
 
     elif strategy == 'mean':
       # Collect predictions from all selected expressions
-      all_predictions = []
-      for expr in self.best_expressions:
-        pred = expr.evaluate(X)
-        if pred.ndim == 1:
-          pred = pred.reshape(-1, 1)
-        all_predictions.append(pred)
+      if data_scaler is not None:
+        X_scaled = data_scaler.transform_input(X)
+        all_predictions = []
+        for expr in self.best_expressions:
+          pred_scaled = expr.evaluate(X_scaled)
+          pred_original = data_scaler.inverse_transform_output(pred_scaled)
+          if pred_original.ndim == 1:
+            pred_original = pred_original.reshape(-1, 1)
+          all_predictions.append(pred_original)
+      else:
+        all_predictions = []
+        for expr in self.best_expressions:
+          pred = expr.evaluate(X)
+          if pred.ndim == 1:
+            pred = pred.reshape(-1, 1)
+          all_predictions.append(pred)
 
       # Average the predictions column-wise
       return np.mean(np.array(all_predictions), axis=0)
@@ -237,10 +259,33 @@ class EnsembleMIMORegressor:
       raise ValueError(f"Invalid prediction strategy '{strategy}'. Choose from 'mean' or 'best_only'.")
 
   def get_expressions(self) -> List[str]:
-    """Returns the string representations of the top expressions in the ensemble."""
+    """Returns the string representations of the top expressions in the ensemble with scaling indicators."""
     if not self.best_expressions:
       return []
-    return [expr.to_string() for expr in self.best_expressions]
+    
+    # Check if we have a fitted regressor with scaling information
+    if (hasattr(self, 'fitted_regressors') and self.fitted_regressors and 
+        len(self.fitted_regressors) > 0 and hasattr(self.fitted_regressors[0], 'data_scaler') and 
+        self.fitted_regressors[0].data_scaler is not None):
+      
+      # Use the data scaler to add scaling indicators
+      data_scaler = self.fitted_regressors[0].data_scaler
+      n_inputs = getattr(self.fitted_regressors[0], 'n_inputs', 1)
+      
+      expressions_with_indicators = []
+      for expr in self.best_expressions:
+        expr_str = expr.to_string()
+        try:
+          expr_with_indicators = data_scaler.get_scaled_expression_with_indicators(expr_str, n_inputs)
+          expressions_with_indicators.append(expr_with_indicators)
+        except Exception as e:
+          print(f"Warning: Failed to add scaling indicators: {e}")
+          expressions_with_indicators.append(expr_str)
+      
+      return expressions_with_indicators
+    else:
+      # Fallback to simple string representation
+      return [expr.to_string() for expr in self.best_expressions]
 
   def get_fitness_histories(self) -> List[List[float]]:
     """Returns the fitness histories for the top expressions in the ensemble."""
