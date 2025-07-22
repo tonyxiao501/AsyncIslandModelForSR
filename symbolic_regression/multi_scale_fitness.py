@@ -3,11 +3,13 @@ Multi-Scale Fitness Evaluation Module
 
 This module provides robust fitness metrics that work well across extreme magnitude ranges,
 specifically designed for physics problems with very small or very large values.
+All fitness evaluations are unified to return R² scores using scikit-learn's implementation.
 """
 
 import numpy as np
 from typing import Union, Optional
 import warnings
+from sklearn.metrics import r2_score
 
 
 class MultiScaleFitnessEvaluator:
@@ -73,6 +75,7 @@ class MultiScaleFitnessEvaluator:
     def _log_space_fitness(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         """
         Evaluate fitness in log space for extreme-scale problems.
+        Returns R² equivalent score.
         """
         try:
             # Handle negative values by shifting to positive range
@@ -98,23 +101,18 @@ class MultiScaleFitnessEvaluator:
                np.any(np.isinf(log_true)) or np.any(np.isinf(log_pred)):
                 return self._relative_error_fitness(y_true, y_pred)
             
-            # Calculate R² in log space
-            ss_res = np.sum((log_true - log_pred) ** 2)
-            ss_tot = np.sum((log_true - np.mean(log_true)) ** 2)
+            # Calculate R² in log space using scikit-learn
+            r2_log = r2_score(log_true, log_pred)
             
-            if ss_tot == 0:
-                return 1.0 if ss_res == 0 else 0.0
-            
-            r2_log = 1.0 - (ss_res / ss_tot)
-            
-            # Also calculate relative error for robustness
+            # Also calculate relative error for robustness and convert to R² equivalent
             relative_error = np.mean(np.abs((y_true - y_pred) / (np.abs(y_true) + 1e-12)))
-            relative_fitness = 1.0 / (1.0 + relative_error)
+            # Convert relative error to R² equivalent (1 - normalized error)
+            relative_r2 = max(0.0, float(1.0 - relative_error))
             
-            # Combine both metrics
-            combined_fitness = 0.7 * r2_log + 0.3 * relative_fitness
+            # Combine both R² metrics (weighted towards log-space R²)
+            combined_r2 = 0.7 * r2_log + 0.3 * relative_r2
             
-            return combined_fitness
+            return combined_r2
             
         except Exception as e:
             warnings.warn(f"Log space fitness calculation failed: {e}")
@@ -122,7 +120,7 @@ class MultiScaleFitnessEvaluator:
     
     def _relative_error_fitness(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         """
-        Calculate fitness based on relative error metrics (MAPE/SMAPE).
+        Calculate fitness based on relative error metrics, converted to R² equivalent.
         """
         try:
             # Symmetric Mean Absolute Percentage Error (SMAPE)
@@ -131,19 +129,19 @@ class MultiScaleFitnessEvaluator:
             denominator = np.where(denominator < 1e-12, 1e-12, denominator)
             smape = np.mean(np.abs(y_true - y_pred) / denominator)
             
-            # Convert to fitness (higher is better)
-            smape_fitness = 1.0 / (1.0 + smape)
+            # Convert SMAPE to R² equivalent (1 - normalized error)
+            smape_r2 = max(0.0, float(1.0 - smape))
             
-            # Also calculate normalized RMSE for additional robustness
+            # Also calculate normalized RMSE and convert to R² equivalent
             rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
             mean_magnitude = np.mean(np.abs(y_true))
             normalized_rmse = rmse / (mean_magnitude + 1e-12)
-            rmse_fitness = 1.0 / (1.0 + normalized_rmse)
+            rmse_r2 = max(0.0, float(1.0 - normalized_rmse))
             
-            # Combine metrics
-            combined_fitness = 0.6 * smape_fitness + 0.4 * rmse_fitness
+            # Combine R² equivalent metrics
+            combined_r2 = 0.6 * smape_r2 + 0.4 * rmse_r2
             
-            return combined_fitness
+            return combined_r2
             
         except Exception as e:
             warnings.warn(f"Relative error fitness calculation failed: {e}")
@@ -151,18 +149,13 @@ class MultiScaleFitnessEvaluator:
     
     def _standard_r2_fitness(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         """
-        Standard R² fitness calculation.
+        Standard R² fitness calculation using scikit-learn's implementation.
         """
         try:
-            ss_res = np.sum((y_true - y_pred) ** 2)
-            ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+            # Use scikit-learn's optimized R² implementation
+            r2 = r2_score(y_true, y_pred)
             
-            if ss_tot == 0:
-                return 1.0 if ss_res == 0 else 0.0
-            
-            r2 = 1.0 - (ss_res / ss_tot)
-            
-            # Clip to reasonable range
+            # Clip to reasonable range for extreme cases
             return max(-1e6, min(1.0, r2))
             
         except Exception:
@@ -177,9 +170,9 @@ class MultiScaleFitnessEvaluator:
         
         metrics = {}
         
-        # Standard metrics
+        # Standard metrics using scikit-learn
         try:
-            metrics['r2'] = self._standard_r2_fitness(y_true, y_pred)
+            metrics['r2'] = r2_score(y_true, y_pred)
             metrics['rmse'] = np.sqrt(np.mean((y_true - y_pred) ** 2))
             metrics['mae'] = np.mean(np.abs(y_true - y_pred))
         except Exception as e:
@@ -200,20 +193,14 @@ class MultiScaleFitnessEvaluator:
             metrics['mape'] = 1e6
             metrics['smape'] = 1e6
         
-        # Log-space metrics (if applicable)
+        # Log-space metrics (if applicable) using scikit-learn
         try:
             if np.all(y_true > 0) and np.all(y_pred > 0):
                 log_true = np.log10(y_true)
                 log_pred = np.log10(y_pred)
                 
-                ss_res_log = np.sum((log_true - log_pred) ** 2)
-                ss_tot_log = np.sum((log_true - np.mean(log_true)) ** 2)
-                
-                if ss_tot_log > 0:
-                    metrics['r2_log'] = 1.0 - (ss_res_log / ss_tot_log)
-                else:
-                    metrics['r2_log'] = 1.0 if ss_res_log == 0 else 0.0
-                    
+                # Use scikit-learn for log-space R²
+                metrics['r2_log'] = r2_score(log_true, log_pred)
                 metrics['rmse_log'] = np.sqrt(np.mean((log_true - log_pred) ** 2))
             else:
                 metrics['r2_log'] = None
@@ -251,14 +238,10 @@ def create_robust_fitness_function(use_multi_scale: bool = True):
         def fitness_function(y_true: np.ndarray, y_pred: np.ndarray,
                            parsimony_coefficient: float = 0.0) -> float:
             try:
-                ss_res = np.sum((y_true - y_pred) ** 2)
-                ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+                # Use scikit-learn's R² implementation for consistency
+                r2 = r2_score(y_true, y_pred)
                 
-                if ss_tot == 0:
-                    r2 = 1.0 if ss_res == 0 else 0.0
-                else:
-                    r2 = 1.0 - (ss_res / ss_tot)
-                
+                # Apply parsimony penalty to R² score
                 return r2 - parsimony_coefficient
             except Exception:
                 return -1e6

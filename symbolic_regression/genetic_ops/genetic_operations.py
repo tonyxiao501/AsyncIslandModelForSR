@@ -225,27 +225,45 @@ class GeneticOperations:
     def _evaluate_fitness(self, expr: Expression, X: Optional[np.ndarray] = None, 
                          y: Optional[np.ndarray] = None, parsimony_coefficient: float = 0.001) -> float:
         """
-        Evaluate the fitness of a single expression.
+        Evaluate the fitness of a single expression using R² score.
         If X and y are not provided, returns a large negative value.
         """
         if X is None or y is None:
             return -1e8
 
         try:
+            from sklearn.metrics import r2_score
+            
             predictions = expr.evaluate(X)
             if predictions.ndim == 1:
                 predictions = predictions.reshape(-1, 1)
-            mse = np.mean((y - predictions) ** 2)
+            
+            # Calculate R² score using scikit-learn
+            try:
+                r2 = r2_score(y.flatten(), predictions.flatten())
+            except Exception:
+                # Fallback calculation for edge cases
+                ss_res = np.sum((y - predictions) ** 2)
+                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                if ss_tot == 0:
+                    r2 = 1.0 if ss_res == 0 else 0.0
+                else:
+                    r2 = 1.0 - (ss_res / ss_tot)
+            
+            # Apply penalties to R² score
             complexity_penalty = parsimony_coefficient * expr.complexity()
             stability_penalty = 0.0
             max_abs_pred = np.max(np.abs(predictions))
+            
             if max_abs_pred > 1e6:
-                stability_penalty = 0.5
+                stability_penalty = 0.3  # Adjust to R² scale
             elif max_abs_pred > 1e4:
                 stability_penalty = 0.1
+            
             if np.any(~np.isfinite(predictions)):
-                stability_penalty += 1.0
-            fitness = -mse - complexity_penalty - stability_penalty
+                stability_penalty += 0.5  # Heavily penalize infinite/NaN
+            
+            fitness = r2 - complexity_penalty - stability_penalty
             return float(fitness)
         except Exception:
             return -1e8

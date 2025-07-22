@@ -97,7 +97,9 @@ def optimize_final_expressions(expressions: List[Expression], X: np.ndarray, y: 
 
 def evaluate_optimized_expressions(expressions: List[Expression], X: np.ndarray, y: np.ndarray, 
                                   parsimony_coefficient: float = 0.01) -> List[float]:
-  """Re-evaluate expressions after optimization"""
+  """Re-evaluate expressions after optimization using R² scores"""
+  from sklearn.metrics import r2_score
+  
   fitness_scores = []
   
   for expr in expressions:
@@ -106,16 +108,21 @@ def evaluate_optimized_expressions(expressions: List[Expression], X: np.ndarray,
       if predictions.ndim == 1:
         predictions = predictions.reshape(-1, 1)
         
-      # Calculate fitness with parsimony penalty
-      mse = np.mean((y - predictions) ** 2)
-      if mse == 0:
-        fitness = 1000.0  # Perfect fit
-      else:
-        fitness = 1.0 / (1.0 + mse)
+      # Calculate R² score using scikit-learn
+      try:
+        r2 = r2_score(y.flatten(), predictions.flatten())
+      except Exception:
+        # Fallback calculation for edge cases
+        ss_res = np.sum((y - predictions) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        if ss_tot == 0:
+          r2 = 1.0 if ss_res == 0 else 0.0
+        else:
+          r2 = 1.0 - (ss_res / ss_tot)
       
-      # Apply parsimony penalty
+      # Apply parsimony penalty to R² score
       complexity_penalty = parsimony_coefficient * expr.complexity()
-      fitness = fitness - complexity_penalty
+      fitness = r2 - complexity_penalty
       
       fitness_scores.append(fitness)
     except Exception:

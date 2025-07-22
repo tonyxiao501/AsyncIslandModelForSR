@@ -321,7 +321,9 @@ def evaluate_population_enhanced_optimized(population: List[Expression],
                                          y: np.ndarray, 
                                          parsimony_coefficient: float,
                                          pop_manager: PopulationManager) -> List[float]:
-    """Optimized fitness evaluation with improved convergence"""
+    """Optimized fitness evaluation with improved convergence - unified to R² scores"""
+    from sklearn.metrics import r2_score
+    
     fitness_scores = []
     
     # Pre-calculate population diversity metrics once - reduce diversity bonus impact
@@ -335,29 +337,41 @@ def evaluate_population_enhanced_optimized(population: List[Expression],
             if predictions.ndim == 1:
                 predictions = predictions.reshape(-1, 1)
             
-            # Core fitness calculation
-            mse = np.mean((y - predictions) ** 2)
+            # Core fitness calculation using R² score
+            try:
+                r2 = r2_score(y.flatten(), predictions.flatten())
+            except Exception:
+                # Fallback for edge cases
+                ss_res = np.sum((y - predictions) ** 2)
+                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                if ss_tot == 0:
+                    r2 = 1.0 if ss_res == 0 else 0.0
+                else:
+                    r2 = 1.0 - (ss_res / ss_tot)
             
-            # Cached complexity - reduced penalty for moderate complexity
+            # Cached complexity penalty
             complexity = pop_manager.get_expression_complexity(expr)
             complexity_penalty = parsimony_coefficient * complexity
             
-            # Stability penalty (vectorized) - more aggressive for unstable solutions
+            # Stability penalty (converted to R² scale) - penalize extreme predictions
             stability_penalty = 0.0
             max_abs_pred = np.max(np.abs(predictions))
             
             if max_abs_pred > 1e8:  # More aggressive for very large values
-                stability_penalty = 2.0
+                stability_penalty = 0.5  # Reduce R² by up to 0.5
             elif max_abs_pred > 1e6:
-                stability_penalty = 1.0
+                stability_penalty = 0.3
             elif max_abs_pred > 1e4:
-                stability_penalty = 0.2
+                stability_penalty = 0.1
             
             if np.any(~np.isfinite(predictions)):
-                stability_penalty += 2.0  # Heavily penalize infinite/NaN
+                stability_penalty += 0.5  # Heavily penalize infinite/NaN
             
-            # Reduced diversity bonus to focus more on fitness
-            fitness = -mse - complexity_penalty - stability_penalty + base_diversity_bonus
+            # Apply small diversity bonus (as R² adjustment)
+            diversity_bonus = base_diversity_bonus * 0.01  # Convert to R² scale
+            
+            # Final R² based fitness score
+            fitness = r2 - complexity_penalty - stability_penalty + diversity_bonus
             fitness_scores.append(float(fitness))
             
         except Exception:

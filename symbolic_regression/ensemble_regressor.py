@@ -305,7 +305,7 @@ class EnsembleMIMORegressor:
 
   def score(self, X: np.ndarray, y: np.ndarray, strategy: str = 'mean') -> float:
     """
-    Calculates the R² (coefficient of determination) score for the ensemble model.
+    Calculates the R² (coefficient of determination) score using scikit-learn's implementation.
 
     Args:
         X (np.ndarray): Test samples.
@@ -315,6 +315,8 @@ class EnsembleMIMORegressor:
     Returns:
         float: The R² score.
     """
+    from sklearn.metrics import r2_score
+    
     if not self.best_expressions:
       raise ValueError("Model has not been fitted yet. Call fit() first.")
 
@@ -323,11 +325,16 @@ class EnsembleMIMORegressor:
     if y.ndim == 1:
       y = y.reshape(-1, 1)
 
-    ss_res = float(np.sum((y - predictions) ** 2))
-    ss_tot = float(np.sum((y - np.mean(y, axis=0)) ** 2))
+    # Use scikit-learn's R² implementation for consistency
+    try:
+      return r2_score(y.flatten(), predictions.flatten())
+    except Exception:
+      # Fallback calculation for edge cases
+      ss_res = float(np.sum((y - predictions) ** 2))
+      ss_tot = float(np.sum((y - np.mean(y, axis=0)) ** 2))
 
-    if ss_tot == 0.0:
-      # Handle the case where the total sum of squares is zero
-      return 1.0 if ss_res == 0.0 else 0.0
+      if ss_tot == 0.0:
+        # Handle the case where the total sum of squares is zero
+        return 1.0 if ss_res == 0.0 else 0.0
 
-    return 1.0 - (ss_res / ss_tot)
+      return 1.0 - (ss_res / ss_tot)

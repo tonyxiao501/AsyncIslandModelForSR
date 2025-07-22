@@ -107,10 +107,8 @@ def test_final_optimization():
     expressions = model.get_expressions()
     predictions = model.predict(X)
     
-    # Calculate R² score
-    ss_res = np.sum((y - predictions) ** 2)
-    ss_tot = np.sum((y - np.mean(y)) ** 2)
-    r2_score = 1 - (ss_res / ss_tot)
+    # Calculate R² score using model's method (now unified)
+    r2_score = model.score(X, y)
     
     print(f"Total time: {total_time:.2f}s")
     print(f"Found {len(expressions)} expressions")

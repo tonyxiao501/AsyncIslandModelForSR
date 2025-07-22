@@ -181,8 +181,9 @@ class MIMOSymbolicRegressor:
                                       X: np.ndarray, y: np.ndarray) -> List[float]:
     """
     Enhanced population evaluation using multi-scale fitness metrics.
-    Handles extreme-scale physics problems much better than standard R².
+    All fitness values are now R² based for consistency.
     """
+    from sklearn.metrics import r2_score
     fitness_scores = []
     
     for expr in population:
@@ -192,30 +193,33 @@ class MIMOSymbolicRegressor:
         if predictions.ndim == 1:
           predictions = predictions.reshape(-1, 1)
         
-        # Use multi-scale fitness evaluator
+        # Use multi-scale fitness evaluator (now returns R² equivalent)
         if self.fitness_evaluator:
           base_fitness = self.fitness_evaluator.evaluate_fitness(
             y.flatten(), predictions.flatten(), 0.0  # No parsimony penalty here
           )
         else:
-          # Fallback to standard R²
-          ss_res = np.sum((y - predictions) ** 2)
-          ss_tot = np.sum((y - np.mean(y)) ** 2)
-          base_fitness = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+          # Fallback to standard R² using scikit-learn
+          try:
+            base_fitness = r2_score(y.flatten(), predictions.flatten())
+          except Exception:
+            ss_res = np.sum((y - predictions) ** 2)
+            ss_tot = np.sum((y - np.mean(y)) ** 2)
+            base_fitness = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
         
-        # Apply complexity penalty
+        # Apply complexity penalty (as R² adjustment)
         complexity = expr.complexity()
         complexity_penalty = self.parsimony_coefficient * complexity
         
-        # Apply stability penalty for extreme predictions
+        # Apply stability penalty for extreme predictions (as R² adjustment)
         stability_penalty = 0.0
         max_abs_pred = np.max(np.abs(predictions))
         if max_abs_pred > 1e10:
-          stability_penalty = 2.0
+          stability_penalty = 0.5  # Adjust to R² scale
         elif max_abs_pred > 1e8:
-          stability_penalty = 0.5
+          stability_penalty = 0.3
         elif np.any(np.isnan(predictions)) or np.any(np.isinf(predictions)):
-          stability_penalty = 10.0
+          stability_penalty = 1.0  # Heavy penalty in R² scale
         
         final_fitness = base_fitness - complexity_penalty - stability_penalty
         fitness_scores.append(final_fitness)
@@ -550,7 +554,9 @@ class MIMOSymbolicRegressor:
     return final_predictions
 
   def score(self, X: np.ndarray, y: np.ndarray) -> float:
-    """Calculate R² score for the model with proper scaling handling"""
+    """Calculate R² score for the model using scikit-learn's consistent implementation"""
+    from sklearn.metrics import r2_score
+    
     if not self.best_expressions:
       raise ValueError("Model has not been fitted yet")
 
@@ -562,49 +568,11 @@ class MIMOSymbolicRegressor:
     if predictions.ndim == 1:
       predictions = predictions.reshape(-1, 1)
 
-    # Check for extreme predictions that indicate scaling issues
-    max_pred = np.max(np.abs(predictions))
-    max_true = np.max(np.abs(y))
-    
-    if max_pred > 1000 * max_true or max_pred > 1e20:
-      if self.console_log:
-        print(f"Warning: Extreme predictions detected (max: {max_pred:.2e}, true max: {max_true:.2e})")
-      # Return fitness-based score instead
-      if self.use_multi_scale_fitness and self.fitness_evaluator:
-        try:
-          fitness = self.fitness_evaluator.evaluate_fitness(
-            y.flatten(), predictions.flatten(), 0.0
-          )
-          return max(0.0, min(1.0, fitness))
-        except:
-          return 0.0
-      else:
-        return 0.0
-
-    # Use multi-scale fitness evaluation if available for better extreme value handling
-    if self.use_multi_scale_fitness and self.fitness_evaluator:
-      try:
-        # Use the same fitness evaluator that was used during training
-        fitness = self.fitness_evaluator.evaluate_fitness(
-          y.flatten(), predictions.flatten(), 0.0  # No parsimony penalty for scoring
-        )
-        # Convert fitness to R² approximation (fitness is already in 0-1 range typically)
-        return max(0.0, min(1.0, fitness))  # Clamp to valid R² range
-      except Exception as e:
-        if self.console_log:
-          print(f"Warning: Multi-scale fitness evaluation failed in score, falling back to standard R²: {e}")
-
-    # Fallback to standard R² calculation
+    # Always use scikit-learn's R² implementation for consistency
     try:
-      ss_res = float(np.sum((y - predictions) ** 2))
-      ss_tot = float(np.sum((y - np.mean(y, axis=0)) ** 2))
-
-      if ss_tot == 0:
-        return 1.0 if ss_res == 0 else 0.0
-
-      r2 = 1.0 - (ss_res / ss_tot)
+      r2 = r2_score(y.flatten(), predictions.flatten())
       
-      # For extreme values, clamp the result to prevent meaningless negative R²
+      # For extreme values, clamp the result to prevent meaningless scores
       if abs(r2) > 100:
         if self.console_log:
           print(f"Warning: Extreme R² value ({r2:.2e}) detected, likely due to scaling mismatch")
