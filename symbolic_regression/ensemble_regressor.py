@@ -1,8 +1,11 @@
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, TYPE_CHECKING
 from .expression_tree import Expression
 import multiprocessing
 from .ensemble_worker import _fit_worker
+
+if TYPE_CHECKING:
+    from .data_scaling import DataScaler
 
 class EnsembleMIMORegressor:
   """
@@ -12,7 +15,10 @@ class EnsembleMIMORegressor:
   def __init__(self, n_fits: int = 8, top_n_select: int = 5,
                enable_inter_thread_communication: bool = True,
                exchange_interval: int = 10, purge_percentage: float = 0.15,
-               import_percentage: float = 0.03, debug_csv_path: Optional[str] = None, **regressor_kwargs):
+               import_percentage: float = 0.03, debug_csv_path: Optional[str] = None,
+               # Shared scaling parameters to ensure consistency across ensemble
+               shared_data_scaler: Optional['DataScaler'] = None,
+               **regressor_kwargs):
     """
     Initializes the Ensemble Regressor with optional inter-thread communication.
 
@@ -29,6 +35,9 @@ class EnsembleMIMORegressor:
         debug_csv_path (str): Path to a CSV file for debugging purposes, to log
                               the progress and results of each fit. If None, logging
                               to CSV is disabled.
+        shared_data_scaler (DataScaler): Pre-fitted data scaler to ensure consistent
+                                        scaling across all ensemble members. If None,
+                                        each worker will fit its own scaler.
         **regressor_kwargs: Keyword arguments to be passed to each
                             underlying MIMOSymbolicRegressor instance.
     """
@@ -54,6 +63,9 @@ class EnsembleMIMORegressor:
 
     # Debug CSV path
     self.debug_csv_path = debug_csv_path
+    
+    # Shared data scaler for consistent scaling across ensemble
+    self.shared_data_scaler = shared_data_scaler
 
   def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False):
     """
@@ -65,6 +77,26 @@ class EnsembleMIMORegressor:
     `if __name__ == "__main__":` block in your script.
     """
     print(f"Starting ensemble fit with {self.n_fits} concurrent regressors...")
+    
+    # Pre-fit a shared data scaler if scaling is enabled and none provided
+    if (self.shared_data_scaler is None and 
+        self.regressor_kwargs.get('enable_data_scaling', False)):
+      print("Fitting shared data scaler for consistent ensemble scaling...")
+      from .data_scaling import DataScaler
+      
+      input_scaling = self.regressor_kwargs.get('input_scaling', 'auto')
+      output_scaling = self.regressor_kwargs.get('output_scaling', 'auto')
+      scaling_target_range = self.regressor_kwargs.get('scaling_target_range', (-5.0, 5.0))
+      
+      self.shared_data_scaler = DataScaler(
+          input_scaling=input_scaling,
+          output_scaling=output_scaling,
+          target_range=scaling_target_range
+      )
+      
+      # Fit the scaler on the training data
+      X_scaled, y_scaled = self.shared_data_scaler.fit_transform(X, y)
+      print(f"Data scaling applied: X {X.shape} -> {X_scaled.shape}, y {y.shape} -> {y_scaled.shape}")
     
     # Disable inter-thread communication by default to avoid synchronization overhead
     use_communication = (self.enable_inter_thread_communication and 
@@ -92,6 +124,10 @@ class EnsembleMIMORegressor:
     # We disable console logging for worker processes to keep the main output clean.
     worker_kwargs = self.regressor_kwargs.copy()
     worker_kwargs['console_log'] = False
+    
+    # If using shared scaling, pass the fitted scaler to workers
+    if self.shared_data_scaler is not None:
+      worker_kwargs['shared_data_scaler'] = self.shared_data_scaler
     
     # Use different random seeds and parameters for diversity without communication overhead
     configs = []
@@ -219,9 +255,10 @@ class EnsembleMIMORegressor:
       X = X.reshape(-1, 1)
 
     # Check if we have scaling information
-    data_scaler = None
-    if (hasattr(self, 'fitted_regressors') and self.fitted_regressors and 
-        len(self.fitted_regressors) > 0 and hasattr(self.fitted_regressors[0], 'data_scaler')):
+    data_scaler = self.shared_data_scaler
+    if (data_scaler is None and hasattr(self, 'fitted_regressors') and 
+        self.fitted_regressors and len(self.fitted_regressors) > 0 and 
+        hasattr(self.fitted_regressors[0], 'data_scaler')):
       data_scaler = self.fitted_regressors[0].data_scaler
 
     if strategy == 'best_only':
@@ -259,33 +296,112 @@ class EnsembleMIMORegressor:
       raise ValueError(f"Invalid prediction strategy '{strategy}'. Choose from 'mean' or 'best_only'.")
 
   def get_expressions(self) -> List[str]:
-    """Returns the string representations of the top expressions in the ensemble with scaling indicators."""
+    """Returns clean string representations of the top expressions with proper scaling information."""
     if not self.best_expressions:
       return []
     
-    # Check if we have a fitted regressor with scaling information
-    if (hasattr(self, 'fitted_regressors') and self.fitted_regressors and 
-        len(self.fitted_regressors) > 0 and hasattr(self.fitted_regressors[0], 'data_scaler') and 
-        self.fitted_regressors[0].data_scaler is not None):
-      
-      # Use the data scaler to add scaling indicators
+    # Get basic expressions (these are in terms of scaled variables)
+    basic_expressions = [expr.to_string() for expr in self.best_expressions]
+    
+    # Check if we have scaling information
+    data_scaler = self.shared_data_scaler
+    if (data_scaler is None and hasattr(self, 'fitted_regressors') and 
+        self.fitted_regressors and len(self.fitted_regressors) > 0 and 
+        hasattr(self.fitted_regressors[0], 'data_scaler')):
       data_scaler = self.fitted_regressors[0].data_scaler
-      n_inputs = getattr(self.fitted_regressors[0], 'n_inputs', 1)
-      
-      expressions_with_indicators = []
-      for expr in self.best_expressions:
-        expr_str = expr.to_string()
-        try:
-          expr_with_indicators = data_scaler.get_scaled_expression_with_indicators(expr_str, n_inputs)
-          expressions_with_indicators.append(expr_with_indicators)
-        except Exception as e:
-          print(f"Warning: Failed to add scaling indicators: {e}")
-          expressions_with_indicators.append(expr_str)
-      
-      return expressions_with_indicators
+    
+    if data_scaler is not None:
+      # Get scaling transformation expressions
+      n_inputs = getattr(self.fitted_regressors[0], 'n_inputs', 1) if hasattr(self, 'fitted_regressors') and self.fitted_regressors else 1
+      try:
+        input_transforms, output_transform = data_scaler.get_scaling_transformation_expressions(n_inputs)
+        
+        # Check if any scaling was actually applied
+        has_input_scaling = any(transform != f"x{i}" for i, transform in enumerate(input_transforms))
+        has_output_scaling = output_transform != "y'"
+        
+        if has_input_scaling or has_output_scaling:
+          # Add scaling information to expressions with new clean format
+          expressions_with_scaling = []
+          for expr_str in basic_expressions:
+            # The expression is in terms of scaled variables, so we present it cleanly
+            expr_with_scaling = expr_str
+            
+            # Add scaling information in the requested format
+            scaling_lines = []
+            
+            # Add input scaling lines (x' = f(x))
+            for i, transform in enumerate(input_transforms):
+              if transform != f"x{i}":
+                scaling_lines.append(f"x{i}' = {transform}")
+            
+            # Add output scaling line (y' = g(y))  
+            if has_output_scaling and output_transform != "y'":
+              # For output, we need the forward transformation, not inverse
+              scaling_lines.append(f"y' = {self._get_forward_output_transform()}")
+            
+            # Combine everything
+            if scaling_lines:
+              expr_with_scaling += "\n with "
+              expr_with_scaling += "\n      ".join(scaling_lines)
+            
+            expressions_with_scaling.append(expr_with_scaling)
+          
+          return expressions_with_scaling
+        else:
+          return basic_expressions
+      except Exception as e:
+        print(f"Warning: Failed to add scaling information: {e}")
+        return basic_expressions
     else:
-      # Fallback to simple string representation
-      return [expr.to_string() for expr in self.best_expressions]
+      return basic_expressions
+
+  def _get_forward_output_transform(self) -> str:
+    """Get the forward output transformation expression (y' = g(y))."""
+    if not hasattr(self, 'fitted_regressors') or not self.fitted_regressors:
+      return "y"
+    
+    data_scaler = self.shared_data_scaler
+    if (data_scaler is None and hasattr(self.fitted_regressors[0], 'data_scaler')):
+      data_scaler = self.fitted_regressors[0].data_scaler
+    
+    if data_scaler is None:
+      return "y"
+    
+    transform = data_scaler.output_transform
+    if transform == 'log':
+      if data_scaler.output_log_offset > 0:
+        if data_scaler.output_log_offset < 1e-6:
+          return f"log(y + {data_scaler.output_log_offset:.2e})"
+        else:
+          return f"log(y + {data_scaler.output_log_offset:.3f})"
+      else:
+        return "log(y)"
+    elif transform == 'standard':
+      if data_scaler.output_scaler is not None:
+        mean = data_scaler.output_scaler.mean_[0]  # type: ignore
+        scale = data_scaler.output_scaler.scale_[0]  # type: ignore
+        return f"(y - {mean:.3f}) / {scale:.3f}"
+      else:
+        return "y"
+    elif transform == 'minmax':
+      if data_scaler.output_scaler is not None:
+        data_min = data_scaler.output_scaler.data_min_[0]  # type: ignore
+        data_range = data_scaler.output_scaler.data_range_[0]  # type: ignore
+        min_range, max_range = data_scaler.target_range
+        range_width = max_range - min_range
+        return f"{min_range:.1f} + {range_width:.1f} * (y - {data_min:.3f}) / {data_range:.3f}"
+      else:
+        return "y"
+    elif transform == 'robust':
+      if data_scaler.output_scaler is not None:
+        center = data_scaler.output_scaler.center_[0]  # type: ignore
+        scale = data_scaler.output_scaler.scale_[0]  # type: ignore
+        return f"(y - {center:.3f}) / {scale:.3f}"
+      else:
+        return "y"
+    else:  # 'none' or unknown
+      return "y"
 
   def get_fitness_histories(self) -> List[List[float]]:
     """Returns the fitness histories for the top expressions in the ensemble."""

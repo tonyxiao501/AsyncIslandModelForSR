@@ -18,12 +18,34 @@ COMPLEXITY_WEIGHTS: Dict[str, float] = {
   '/': 1.8,  # Division is more complex due to potential divide-by-zero
   '^': 2.5,  # Power operations are very complex
 
-  # Unary operations
+  # Basic unary operations
   'sin': 1.3,
   'cos': 1.3,
+  'tan': 1.4,  # Slightly more complex due to singularities
   'sqrt': 1.4,
   'log': 2.0,  # Logarithm can be unstable
   'exp': 2.2,  # Exponential can explode quickly
+  'abs': 1.1,  # Simple operation
+  'neg': 1.0,  # Unary minus
+  
+  # Power-related operations
+  'square': 1.1,
+  'cube': 1.2,
+  'cbrt': 1.4,  # Cube root
+  'fourth_root': 1.5,
+  
+  # Reciprocal operations (critical for physics)
+  'reciprocal': 1.6,  # 1/x
+  'inv_square': 1.8,  # 1/x^2 - important but complex
+  
+  # Safe variants
+  'sqrt_abs': 1.3,  # sqrt(|x|)
+  'log_abs': 1.9,   # log(|x|)
+  
+  # Hyperbolic functions
+  'sinh': 1.5,
+  'cosh': 1.5,
+  'tanh': 1.4,  # Bounded, so slightly simpler
 
   # Terminal nodes
   'variable': 1.0,
@@ -342,16 +364,48 @@ class UnaryOpNode(Node):
     return get_global_pool().get_unary_node(self.operator, operand_c)
   
   def to_sympy(self, c_generator):
+    operand_sympy = self.operand.to_sympy(c_generator)
+    
     if self.operator == 'sin':
-      return sp.sin(self.operand.to_sympy(c_generator))
+      return sp.sin(operand_sympy)
     elif self.operator == 'cos':
-      return sp.cos(self.operand.to_sympy(c_generator))
+      return sp.cos(operand_sympy)
+    elif self.operator == 'tan':
+      return sp.tan(operand_sympy)
     elif self.operator == 'sqrt':
-      return sp.sqrt(self.operand.to_sympy(c_generator))
+      return sp.sqrt(operand_sympy)
     elif self.operator == 'log':
-      return sp.log(self.operand.to_sympy(c_generator))
+      return sp.log(operand_sympy)
     elif self.operator == 'exp':
-      return sp.exp(self.operand.to_sympy(c_generator))
+      return sp.exp(operand_sympy)
+    elif self.operator == 'abs':
+      return sp.Abs(operand_sympy)
+    elif self.operator == 'neg':
+      return -operand_sympy
+    elif self.operator == 'square':
+      return operand_sympy**2
+    elif self.operator == 'cube':
+      return operand_sympy**3
+    elif self.operator == 'reciprocal':
+      return sp.Pow(operand_sympy, -1)
+    elif self.operator == 'sqrt_abs':
+      return sp.sqrt(sp.Abs(operand_sympy))
+    elif self.operator == 'log_abs':
+      return sp.log(sp.Abs(operand_sympy))
+    elif self.operator == 'inv_square':
+      return sp.Pow(operand_sympy, -2)
+    elif self.operator == 'cbrt':
+      return operand_sympy**(sp.Rational(1, 3))
+    elif self.operator == 'fourth_root':
+      return operand_sympy**(sp.Rational(1, 4))
+    elif self.operator == 'sinh':
+      return sp.sinh(operand_sympy)
+    elif self.operator == 'cosh':
+      return sp.cosh(operand_sympy)
+    elif self.operator == 'tanh':
+      return sp.tanh(operand_sympy)
+    else:
+      raise RuntimeWarning(f"to_sympy reached unexpected unary operation: {self.operator}")
 
   def get_constants(self, constant_list):
     self.operand.get_constants(constant_list)

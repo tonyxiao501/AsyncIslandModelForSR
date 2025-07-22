@@ -10,8 +10,41 @@ class ExpressionGenerator:
   def __init__(self, n_inputs: int, max_depth: int = 6):
     self.n_inputs = n_inputs
     self.max_depth = max_depth
-    self.binary_ops = ['+', '-', '*', '/']  # Removed '^' to reduce complexity
-    self.unary_ops = ['sin', 'cos', 'exp', 'log', 'sqrt']
+    self.binary_ops = ['+', '-', '*', '/', '^']  # Re-added power operations for physics
+    # Enhanced unary operations for physics laws
+    self.unary_ops = [
+        'sin', 'cos', 'tan',           # Trigonometric functions
+        'exp', 'log',                  # Exponential and logarithmic
+        'sqrt',                        # Square root
+        'abs',                         # Absolute value
+        'square', 'cube',              # Basic powers
+        'reciprocal',                  # 1/x - critical for inverse laws
+        'neg',                         # -x (unary minus)
+        'sqrt_abs',                    # sqrt(|x|) - for safe square roots
+        'log_abs',                     # log(|x|) - for safe logarithms
+        'inv_square',                  # 1/x^2 - direct inverse square law
+        'cbrt',                        # cube root (x^(1/3))
+        'fourth_root',                 # fourth root (x^(1/4))
+        'sinh', 'cosh', 'tanh'         # Hyperbolic functions for advanced physics
+    ]
+    
+    # Physics-biased operator weights
+    self.physics_unary_weights = {
+        'reciprocal': 3.0,      # Critical for physics laws
+        'inv_square': 3.0,      # Critical for inverse square laws
+        'sqrt': 2.5,            # Important for many physics relations
+        'square': 2.5,          # Important for energy laws
+        'log': 2.0,             # Important for exponential phenomena
+        'exp': 2.0,             # Important for decay/growth
+        'abs': 2.0,             # Safe operations
+        'sqrt_abs': 2.0,        # Safe square root
+        'log_abs': 2.0,         # Safe logarithm
+        'sin': 1.5, 'cos': 1.5, 'tan': 1.0,  # Trig functions
+        'cube': 1.5, 'cbrt': 1.5,    # Cubic operations
+        'neg': 1.5,             # Sign changes
+        'fourth_root': 1.0,     # Less common roots
+        'sinh': 1.0, 'cosh': 1.0, 'tanh': 1.0  # Hyperbolic functions
+    }
 
   def generate_random_expression(self, depth: int = 0, max_depth: Optional[int] = None) -> Node:
     """Generate a validated random expression"""
@@ -37,11 +70,28 @@ class ExpressionGenerator:
     terminal_prob = 0.3 + (depth / max_depth) * 0.7
 
     if depth >= max_depth or random.random() < terminal_prob:
-      # Terminal nodes
+      # Terminal nodes with expanded constant range for physics
       if random.random() < 0.65:  # Favor variables
         return VariableNode(random.randint(0, self.n_inputs - 1))
       else:
-        return ConstantNode(random.uniform(-3, 3))  # Smaller constant range
+        # Enhanced constant generation for physics
+        if random.random() < 0.3:  # 30% chance for common physics constants
+          physics_constants = [
+            0.5, 1.0, 2.0, 3.0, 4.0, 5.0,     # Common small integers
+            0.1, 0.2, 0.25, 0.33, 0.67,       # Common fractions
+            1.41, 1.73, 2.72, 3.14,           # sqrt(2), sqrt(3), e, pi approximations
+            -1.0, -0.5, -2.0                   # Common negative values
+          ]
+          return ConstantNode(random.choice(physics_constants))
+        else:
+          # Random constants with physics-appropriate range
+          if random.random() < 0.8:
+            return ConstantNode(random.uniform(-5, 5))  # Most common range
+          else:
+            # Occasionally generate larger constants for scaling
+            sign = random.choice([-1, 1])
+            magnitude = random.choice([10, 100, 1000, 0.1, 0.01, 0.001])
+            return ConstantNode(sign * magnitude)
 
     # Function nodes with reduced complexity
     if depth < max_depth - 1:
@@ -51,16 +101,39 @@ class ExpressionGenerator:
         right = self._generate_node(depth + 1, max_depth)
         return BinaryOpNode(op, left, right)
       else:
-        # Limit unary operations at deeper levels
+        # Use physics-biased unary operations
         if depth < max_depth - 2:
-          op = random.choice(self.unary_ops)
+          # Choose unary operator with physics bias
+          if hasattr(self, 'physics_unary_weights'):
+            weights = [self.physics_unary_weights.get(op, 1.0) for op in self.unary_ops]
+            op = random.choices(self.unary_ops, weights=weights)[0]
+          else:
+            op = random.choice(self.unary_ops)
           operand = self._generate_node(depth + 1, max_depth)
           return UnaryOpNode(op, operand)
 
-    # Fallback to terminal
+    # Fallback to terminal with enhanced physics constants (ExpressionGenerator)
     if random.random() < 0.65:
       return VariableNode(random.randint(0, self.n_inputs - 1))
-    return ConstantNode(random.uniform(-3, 3))
+    else:
+      # Enhanced constant generation for physics (ExpressionGenerator fallback)
+      if random.random() < 0.3:  # 30% chance for common physics constants
+        physics_constants = [
+          0.5, 1.0, 2.0, 3.0, 4.0, 5.0,     # Common small integers
+          0.1, 0.2, 0.25, 0.33, 0.67,       # Common fractions
+          1.41, 1.73, 2.72, 3.14,           # sqrt(2), sqrt(3), e, pi approximations
+          -1.0, -0.5, -2.0                   # Common negative values
+        ]
+        return ConstantNode(random.choice(physics_constants))
+      else:
+        # Random constants with physics-appropriate range
+        if random.random() < 0.8:
+          return ConstantNode(random.uniform(-5, 5))  # Most common range
+        else:
+          # Occasionally generate larger constants for scaling
+          sign = random.choice([-1, 1])
+          magnitude = random.choice([10, 100, 1000, 0.1, 0.01, 0.001])
+          return ConstantNode(sign * magnitude)
 
   def generate_population(self, population_size: int) -> List[Expression]:
     """Generate a validated population"""
@@ -95,6 +168,15 @@ class BiasedExpressionGenerator(ExpressionGenerator):
 
     # Create weighted operator lists
     self.weighted_binary_ops = self._create_weighted_operator_list()
+    
+    # Inherit physics unary weights from parent
+    if not hasattr(self, 'physics_unary_weights'):
+      self.physics_unary_weights = {
+          'reciprocal': 3.0, 'inv_square': 3.0, 'sqrt': 2.5, 'square': 2.5,
+          'log': 2.0, 'exp': 2.0, 'abs': 2.0, 'sqrt_abs': 2.0, 'log_abs': 2.0,
+          'sin': 1.5, 'cos': 1.5, 'tan': 1.0, 'cube': 1.5, 'cbrt': 1.5,
+          'neg': 1.5, 'fourth_root': 1.0, 'sinh': 1.0, 'cosh': 1.0, 'tanh': 1.0
+      }
 
   def _create_weighted_operator_list(self) -> List[str]:
     """Create weighted list of binary operators based on generation rates"""
@@ -148,13 +230,36 @@ class BiasedExpressionGenerator(ExpressionGenerator):
         right = self._generate_biased_node(depth + 1, max_depth)
         return BinaryOpNode(op, left, right)
       else:
-        # Unary operations (unchanged)
+        # Unary operations with physics bias
         if depth < max_depth - 2:
-          op = random.choice(self.unary_ops)
+          # Choose unary operator with physics bias
+          if hasattr(self, 'physics_unary_weights'):
+            weights = [self.physics_unary_weights.get(op, 1.0) for op in self.unary_ops]
+            op = random.choices(self.unary_ops, weights=weights)[0]
+          else:
+            op = random.choice(self.unary_ops)
           operand = self._generate_biased_node(depth + 1, max_depth)
           return UnaryOpNode(op, operand)
 
-    # Fallback to terminal
+    # Fallback to terminal with enhanced physics constants (BiasedExpressionGenerator)
     if random.random() < 0.65:
       return VariableNode(random.randint(0, self.n_inputs - 1))
-    return ConstantNode(random.uniform(-3, 3))
+    else:
+      # Enhanced constant generation for physics (BiasedExpressionGenerator fallback)
+      if random.random() < 0.3:  # 30% chance for common physics constants
+        physics_constants = [
+          0.5, 1.0, 2.0, 3.0, 4.0, 5.0,     # Common small integers
+          0.1, 0.2, 0.25, 0.33, 0.67,       # Common fractions
+          1.41, 1.73, 2.72, 3.14,           # sqrt(2), sqrt(3), e, pi approximations
+          -1.0, -0.5, -2.0                   # Common negative values
+        ]
+        return ConstantNode(random.choice(physics_constants))
+      else:
+        # Random constants with physics-appropriate range
+        if random.random() < 0.8:
+          return ConstantNode(random.uniform(-5, 5))  # Most common range
+        else:
+          # Occasionally generate larger constants for scaling
+          sign = random.choice([-1, 1])
+          magnitude = random.choice([10, 100, 1000, 0.1, 0.01, 0.001])
+          return ConstantNode(sign * magnitude)

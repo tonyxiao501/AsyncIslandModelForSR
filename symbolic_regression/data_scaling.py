@@ -1,32 +1,7 @@
 """
 Data Scaling and Transformation Module for Symbolic Regression
 
-This             # Enhanced thresholds for extreme physics scales
-            if magnitude_range > 4:  # Reduced threshold for earlier log detection
-                if not has_negative and np.all(data > 0):
-                    return 'log'
-                else:
-                    return 'robust'  # Use robust for extreme ranges with negatives
-                    
-            # Detect very small constants (< 1e-6) or very large values (> 1e6)
-            if min_magnitude < -6 or max_magnitude > 6:
-                if not has_negative and np.all(data > 0):
-                    return 'log'
-                else:
-                    return 'robust'
-        else:
-            magnitude_range = 0
-        
-        # Check for skewed distributions
-        if data_range > 10 * data_std:  # Highly skewed
-            return 'robust'
-        
-        # For moderate ranges, use standard scaling
-        if abs(data_mean) > 3 * data_std:  # Mean far from zero
-            return 'standard'
-        
-        # Default to minmax for bounded, well-behaved data
-        return 'minmax' comprehensive data preprocessing and postprocessing
+This module provides comprehensive data preprocessing and postprocessing
 capabilities to improve symbolic regression performance on multi-scale problems.
 """
 
@@ -72,8 +47,8 @@ class DataScaler:
         
     def _detect_optimal_scaling(self, data: np.ndarray, is_output: bool = False) -> str:
         """
-        Automatically detect the optimal scaling method for the data.
-        Enhanced for extreme-scale physics problems.
+        Detect optimal scaling method for physics data with extreme values.
+        More aggressive scaling for better physics law discovery.
         
         Args:
             data: Input data array
@@ -90,41 +65,49 @@ class DataScaler:
         data_std = np.std(data)
         data_mean = np.mean(data)
         
-        # Enhanced magnitude range calculation for extreme scales
+        # Avoid scaling if data is already well-behaved
+        if data_range == 0 or data_std == 0:
+            return 'none'
+        
+        # More aggressive approach for physics problems
+        magnitude_range = 0
         nonzero_data = np.abs(data[data != 0])
         if len(nonzero_data) > 0:
-            magnitude_range = np.log10(nonzero_data.max()) - np.log10(nonzero_data.min())
+            max_val = nonzero_data.max()
+            min_val = nonzero_data.min()
+            if max_val > 0 and min_val > 0:
+                magnitude_range = np.log10(max_val) - np.log10(min_val)
             
-            # Check for very small values (e.g., physical constants)
-            min_magnitude = np.log10(nonzero_data.min())
-            max_magnitude = np.log10(nonzero_data.max())
-            
-            # Enhanced thresholds for extreme physics scales
-            if magnitude_range > 4:  # Reduced threshold for earlier log detection
-                if not has_negative and np.all(data > 0):
-                    return 'log'
-                else:
-                    return 'robust'  # Use robust for extreme ranges with negatives
-                    
-            # Detect very small constants (< 1e-6) or very large values (> 1e6)
-            if min_magnitude < -6 or max_magnitude > 6:
+            # Much more aggressive log scaling for physics constants
+            if magnitude_range > 4:  # Raised threshold - less aggressive scaling
                 if not has_negative and np.all(data > 0):
                     return 'log'
                 else:
                     return 'robust'
-        else:
-            magnitude_range = 0
+                    
+            # Scale for smaller extreme values in physics
+            min_magnitude = np.log10(min_val) if min_val > 0 else 0
+            max_magnitude = np.log10(max_val) if max_val > 0 else 0
+            if min_magnitude < -6 or max_magnitude > 6:  # Less aggressive for physics
+                if not has_negative and np.all(data > 0):
+                    return 'log'
+                else:
+                    return 'robust'
         
-        # Check for skewed distributions
-        if data_range > 10 * data_std:  # Highly skewed
+        # Check for highly skewed distributions (less sensitive)
+        if data_range > 10 * data_std:  # Higher threshold - less aggressive scaling
             return 'robust'
         
-        # For moderate ranges, use standard scaling
-        if abs(data_mean) > 3 * data_std:  # Mean far from zero
+        # For moderately large values, use standard scaling (more aggressive)
+        if abs(data_mean) > 3 * data_std:  # Lower threshold
             return 'standard'
         
-        # Default to minmax for bounded, well-behaved data
-        return 'minmax'
+        # For reasonably scaled data, use minimal scaling
+        if data_range > 10:  # Much lower threshold for physics
+            return 'minmax'
+        
+        # Default: robust scaling for physics (more robust than standard)
+        return 'robust'
     
     def _apply_log_transform(self, data: np.ndarray) -> Tuple[np.ndarray, float]:
         """
@@ -202,13 +185,14 @@ class DataScaler:
                     scaler = MinMaxScaler(feature_range=self.target_range)  # type: ignore
                 elif scale_method == 'robust':
                     scaler = RobustScaler()
-                else:  # 'none'
+                elif scale_method == 'none':
+                    scaler = None
+                else:
                     scaler = None
                 
                 if scaler:
                     X_scaled[:, i] = scaler.fit_transform(feature.reshape(-1, 1)).flatten()
-                else:
-                    pass  # No scaling
+                # If no scaler, keep original values
             
             self.input_scalers.append(scaler)
         
@@ -234,36 +218,61 @@ class DataScaler:
                 self.output_scaler = MinMaxScaler(feature_range=self.target_range)  # type: ignore
             elif self.output_transform == 'robust':
                 self.output_scaler = RobustScaler()
-            else:  # 'none'
+            elif self.output_transform == 'none':
+                self.output_scaler = None
+            else:
                 self.output_scaler = None
             
             if self.output_scaler:
                 y_scaled = self.output_scaler.fit_transform(y.reshape(-1, 1))
+            # If no scaler, keep original values
         
         return X_scaled, y_scaled
     
     def transform_input(self, X: np.ndarray) -> np.ndarray:
         """Transform input data using fitted scalers"""
-        if not hasattr(self, 'input_transforms') or self.input_scalers is None:
+        if not hasattr(self, 'input_transforms') or not self.input_scalers:
             return X
         
         X_scaled = X.copy()
         
-        for i, (transform, scaler) in enumerate(zip(self.input_transforms, self.input_scalers)):
+        for i, (transform, scaler, offset) in enumerate(zip(self.input_transforms, self.input_scalers, self.input_log_offsets)):
             if scaler is not None:
                 col_data = X_scaled[:, i:i+1]
                 if transform == 'log':
                     # Apply log transform with offset
-                    offset = getattr(self, f'input_log_offset_{i}', 0.0)
                     col_data_positive = np.maximum(col_data + offset, 1e-15)
-                    col_data = np.log10(col_data_positive)
-                    if hasattr(scaler, 'transform'):
-                        col_data = scaler.transform(col_data)
+                    col_data = np.log(col_data_positive)
+                    col_data = scaler.transform(col_data)
                 else:
                     col_data = scaler.transform(col_data)
                 X_scaled[:, i:i+1] = col_data
         
         return X_scaled
+    
+    def transform_output(self, y: np.ndarray) -> np.ndarray:
+        """Transform output data using fitted scaler"""
+        if not hasattr(self, 'output_transform') or self.output_scaler is None:
+            return y
+        
+        y_scaled = y.copy()
+        
+        try:
+            if self.output_transform == 'log':
+                # Apply log transform with offset
+                y_positive = np.maximum(y_scaled + self.output_log_offset, 1e-15)
+                y_scaled = np.log(y_positive)
+                if self.output_scaler:
+                    y_scaled = self.output_scaler.transform(y_scaled.reshape(-1, 1))
+            elif self.output_transform in ['standard', 'minmax', 'robust']:
+                if self.output_scaler:
+                    y_scaled = self.output_scaler.transform(y.reshape(-1, 1))
+            # If no scaling, keep original values
+        except Exception as e:
+            print(f"Warning: Output scaling failed: {e}")
+            return y
+        
+        return y_scaled.reshape(y.shape)
     
     def inverse_transform_output(self, y: np.ndarray) -> np.ndarray:
         """Inverse transform output predictions to original scale"""
@@ -281,16 +290,12 @@ class DataScaler:
                     y_original = y_original.reshape(-1, 1)
                 
                 # Then inverse the log transform with safety bounds
-                offset = getattr(self, 'output_log_offset', 0.0)
-                
                 # Clip extreme values to prevent overflow
-                y_original = np.clip(y_original, -50, 50)  # Prevent 10^50+ values
-                
-                y_original = np.power(10, y_original) - offset
+                y_original = np.clip(y_original, -50, 50)  # Prevent exp(50)+ values
+                y_original = np.exp(y_original) - self.output_log_offset
                 
                 # Additional safety check for extreme results
                 if np.any(np.abs(y_original) > 1e30):
-                    # If we get extreme values, fall back to a safer approach
                     y_original = np.where(
                         np.abs(y_original) > 1e30,
                         np.sign(y_original) * 1e30,  # Cap at 1e30
@@ -307,20 +312,19 @@ class DataScaler:
         
         return y_original.reshape(y.shape)
     
-    def get_scaled_expression_with_indicators(self, expression_str: str, n_inputs: int) -> str:
+    def get_scaling_transformation_expressions(self, n_inputs: int) -> Tuple[List[str], str]:
         """
-        Add scaling indicators to expression variables instead of symbolic transformation.
+        Get clean mathematical expressions for the scaling transformations.
         
         Args:
-            expression_str: Expression in terms of scaled variables
             n_inputs: Number of input variables
             
         Returns:
-            Expression with scaling indicators on variables
+            Tuple of (input_transform_expressions, output_transform_expression)
         """
-        result = expression_str
+        input_expressions = []
         
-        # Add scaling indicators to each variable
+        # Generate input transformation expressions
         for i in range(n_inputs):
             if i < len(self.input_transforms):
                 transform = self.input_transforms[i]
@@ -328,39 +332,78 @@ class DataScaler:
                 if transform == 'log':
                     offset = self.input_log_offsets[i]
                     if offset > 0:
-                        indicator = f"X{i}_log(+{offset:.2e})"
+                        if offset < 1e-6:
+                            input_expressions.append(f"log(x{i} + {offset:.2e})")
+                        else:
+                            input_expressions.append(f"log(x{i} + {offset:.6f})")
                     else:
-                        indicator = f"X{i}_log"
+                        input_expressions.append(f"log(x{i})")
                 elif transform == 'standard':
-                    indicator = f"X{i}_std"
+                    if i < len(self.input_scalers) and self.input_scalers[i] is not None:
+                        scaler = self.input_scalers[i]
+                        mean = scaler.mean_[0]  # type: ignore
+                        scale = scaler.scale_[0]  # type: ignore
+                        input_expressions.append(f"(x{i} - {mean:.6f}) / {scale:.6f}")
+                    else:
+                        input_expressions.append(f"x{i}")
                 elif transform == 'minmax':
-                    indicator = f"X{i}_minmax[{self.target_range[0]:.1f},{self.target_range[1]:.1f}]"
+                    if i < len(self.input_scalers) and self.input_scalers[i] is not None:
+                        scaler = self.input_scalers[i]
+                        data_min = scaler.data_min_[0]  # type: ignore
+                        data_range = scaler.data_range_[0]  # type: ignore
+                        min_range, max_range = self.target_range
+                        input_expressions.append(f"{min_range:.1f} + {max_range - min_range:.1f} * (x{i} - {data_min:.6f}) / {data_range:.6f}")
+                    else:
+                        input_expressions.append(f"x{i}")
                 elif transform == 'robust':
-                    indicator = f"X{i}_robust"
-                else:
-                    indicator = f"X{i}_raw"
-                
-                # Replace X{i} with the indicator
-                result = result.replace(f'X{i}', indicator)
+                    if i < len(self.input_scalers) and self.input_scalers[i] is not None:
+                        scaler = self.input_scalers[i]
+                        center = scaler.center_[0]  # type: ignore
+                        scale = scaler.scale_[0]  # type: ignore
+                        input_expressions.append(f"(x{i} - {center:.6f}) / {scale:.6f}")
+                    else:
+                        input_expressions.append(f"x{i}")
+                else:  # 'none' or unknown
+                    input_expressions.append(f"x{i}")
+            else:
+                input_expressions.append(f"x{i}")
         
-        # Add output scaling indicator
-        output_indicator = ""
+        # Generate output transformation expression
         if self.output_transform == 'log':
             if self.output_log_offset > 0:
-                output_indicator = f" → Y_log(+{self.output_log_offset:.2e})"
+                if self.output_log_offset < 1e-6:
+                    output_expr = f"exp(y_scaled) - {self.output_log_offset:.2e}"
+                else:
+                    output_expr = f"exp(y_scaled) - {self.output_log_offset:.6f}"
             else:
-                output_indicator = f" → Y_log"
+                output_expr = "exp(y_scaled)"
         elif self.output_transform == 'standard':
-            output_indicator = f" → Y_std"
+            if self.output_scaler is not None:
+                mean = self.output_scaler.mean_[0]  # type: ignore
+                scale = self.output_scaler.scale_[0]  # type: ignore
+                output_expr = f"y_scaled * {scale:.6f} + {mean:.6f}"
+            else:
+                output_expr = "y_scaled"
         elif self.output_transform == 'minmax':
-            output_indicator = f" → Y_minmax[{self.target_range[0]:.1f},{self.target_range[1]:.1f}]"
+            if self.output_scaler is not None:
+                data_min = self.output_scaler.data_min_[0]  # type: ignore
+                data_range = self.output_scaler.data_range_[0]  # type: ignore
+                min_range, max_range = self.target_range
+                output_expr = f"(y_scaled - {min_range:.1f}) * {data_range:.6f} / {max_range - min_range:.1f} + {data_min:.6f}"
+            else:
+                output_expr = "y_scaled"
         elif self.output_transform == 'robust':
-            output_indicator = f" → Y_robust"
-        else:
-            output_indicator = f" → Y_raw"
+            if self.output_scaler is not None:
+                center = self.output_scaler.center_[0]  # type: ignore
+                scale = self.output_scaler.scale_[0]  # type: ignore
+                output_expr = f"y_scaled * {scale:.6f} + {center:.6f}"
+            else:
+                output_expr = "y_scaled"
+        else:  # 'none' or unknown
+            output_expr = "y_scaled"
         
-        return result + output_indicator
-    
+        return input_expressions, output_expr
+
     def get_scaling_info(self) -> Dict:
         """Get information about the applied scaling transformations."""
         return {

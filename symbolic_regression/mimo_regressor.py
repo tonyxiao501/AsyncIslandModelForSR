@@ -49,6 +49,7 @@ class MIMOSymbolicRegressor:
                input_scaling: str = 'auto',
                output_scaling: str = 'auto',
                scaling_target_range: Tuple[float, float] = (-5.0, 5.0),  # Expanded range for extreme physics scales
+               shared_data_scaler: Optional[DataScaler] = None,  # Pre-fitted scaler for ensemble consistency
                # Multi-scale fitness evaluation
                use_multi_scale_fitness: bool = True,
                extreme_value_threshold: float = 1e6
@@ -82,7 +83,7 @@ class MIMOSymbolicRegressor:
     self.input_scaling = input_scaling
     self.output_scaling = output_scaling
     self.scaling_target_range = scaling_target_range
-    self.data_scaler: Optional[DataScaler] = None
+    self.data_scaler: Optional[DataScaler] = shared_data_scaler  # Use shared scaler if provided
 
     # Multi-scale fitness evaluation
     self.use_multi_scale_fitness = use_multi_scale_fitness
@@ -250,12 +251,18 @@ class MIMOSymbolicRegressor:
     # Apply data scaling if enabled
     X_scaled, y_scaled = X.copy(), y.copy()
     if self.enable_data_scaling:
-      self.data_scaler = DataScaler(
-        input_scaling=self.input_scaling,
-        output_scaling=self.output_scaling,
-        target_range=self.scaling_target_range
-      )
-      X_scaled, y_scaled = self.data_scaler.fit_transform(X, y)
+      if self.data_scaler is None:
+        # Create new data scaler if none provided
+        self.data_scaler = DataScaler(
+          input_scaling=self.input_scaling,
+          output_scaling=self.output_scaling,
+          target_range=self.scaling_target_range
+        )
+        X_scaled, y_scaled = self.data_scaler.fit_transform(X, y)
+      else:
+        # Use pre-fitted shared data scaler (for ensemble consistency)
+        X_scaled = self.data_scaler.transform_input(X)
+        y_scaled = self.data_scaler.transform_output(y) if hasattr(self.data_scaler, 'transform_output') else y.copy()
       
       if self.console_log:
         scaling_info = self.data_scaler.get_scaling_info()
@@ -695,14 +702,6 @@ class MIMOSymbolicRegressor:
     expressions = []
     for expr in self.best_expressions:
       expr_str = expr.to_string()
-      
-      # Add scaling indicators if data scaling was used
-      if self.enable_data_scaling and self.data_scaler is not None and self.n_inputs is not None:
-        try:
-          expr_str = self.data_scaler.get_scaled_expression_with_indicators(expr_str, self.n_inputs)
-        except Exception as e:
-          if self.console_log:
-            print(f"Warning: Failed to add scaling indicators to expression: {e}")
       
       # Apply simplification
       if self.sympy_simplify:
