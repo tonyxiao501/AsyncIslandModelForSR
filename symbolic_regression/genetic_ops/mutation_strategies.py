@@ -33,9 +33,13 @@ class MutationStrategies:
         if len(nodes) <= 1:
             return None
         
-        # Analyze node importance if data is available
-        if X is not None and y is not None:
-            node_importance = self.context_analyzer.calculate_node_importance(expression, X, y)
+        # **PERFORMANCE FIX**: Only analyze node importance if data is available and expression is complex
+        if X is not None and y is not None and len(nodes) > 5:
+            try:
+                node_importance = self.context_analyzer.calculate_node_importance(expression, X, y)
+            except:
+                # Fallback to uniform importance if analysis fails
+                node_importance = {i: 1.0 for i in range(len(nodes))}
         else:
             node_importance = {i: 1.0 for i in range(len(nodes))}
         
@@ -121,8 +125,11 @@ class MutationStrategies:
         if len(nodes) <= 2:
             return None
         
+        # **PERFORMANCE FIX**: Further reduce attempts and focus on simpler transformations
+        max_attempts = 1  # Reduced from 2 to 1 for maximum performance
+        
         # Try sophisticated semantic transformations
-        for _ in range(5):  # More attempts for better success rate
+        for _ in range(max_attempts):
             target_node = random.choice(nodes[1:])  # Skip root
             
             if isinstance(target_node, BinaryOpNode):

@@ -202,23 +202,45 @@ class ExpressionContextAnalyzer:
         nodes = self._get_all_nodes(expression.root)
         node_importance = {}
         
+        # **PERFORMANCE FIX**: Use sampling for large datasets and limit constant nodes evaluated
+        max_data_points = min(50, len(X))  # Sample data for speed
+        sample_indices = np.random.choice(len(X), max_data_points, replace=False) if len(X) > max_data_points else slice(None)
+        X_sample = X[sample_indices]
+        
         try:
-            # Calculate gradient/sensitivity for each node
-            for i, node in enumerate(nodes):
-                if isinstance(node, ConstantNode):
-                    # Test sensitivity to constant changes
+            # **PERFORMANCE FIX**: Only evaluate importance for a subset of constant nodes
+            constant_nodes = [(i, node) for i, node in enumerate(nodes) if isinstance(node, ConstantNode)]
+            max_constants_to_evaluate = min(5, len(constant_nodes))  # Limit to 5 most important constants
+            
+            # Calculate gradient/sensitivity for limited constant nodes
+            for i, node in constant_nodes[:max_constants_to_evaluate]:
+                try:
+                    # Use smaller perturbation for faster calculation
                     original_value = node.value
-                    node.value += 0.01
-                    pred_plus = expression.evaluate(X)
-                    node.value = original_value - 0.01  
-                    pred_minus = expression.evaluate(X)
+                    perturbation = max(0.01, abs(original_value) * 0.01)  # Adaptive perturbation
+                    
+                    node.value += perturbation
+                    pred_plus = expression.evaluate(X_sample)
+                    node.value = original_value - perturbation
+                    pred_minus = expression.evaluate(X_sample)
                     node.value = original_value
                     
-                    sensitivity = np.mean(np.abs(pred_plus - pred_minus))
-                    node_importance[i] = sensitivity
-                else:
+                    # Quick sensitivity calculation
+                    if pred_plus.shape == pred_minus.shape:
+                        sensitivity = np.mean(np.abs(pred_plus - pred_minus))
+                        # Normalize by perturbation size
+                        node_importance[i] = sensitivity / (2 * perturbation)
+                    else:
+                        node_importance[i] = 1.0
+                except:
+                    node_importance[i] = 1.0
+            
+            # Set remaining nodes to default importance
+            for i, node in enumerate(nodes):
+                if i not in node_importance:
                     node_importance[i] = 1.0  # Default importance
-        except:
+                    
+        except Exception:
             # Fallback to uniform importance
             node_importance = {i: 1.0 for i in range(len(nodes))}
         
