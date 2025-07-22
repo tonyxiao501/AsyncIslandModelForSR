@@ -273,7 +273,7 @@ class GeneticOperations:
         If X and y are not provided, returns a large negative value.
         """
         if X is None or y is None:
-            return -1e8
+            return -10.0  # Large negative R² score when data unavailable
 
         try:
             from sklearn.metrics import r2_score
@@ -310,4 +310,4 @@ class GeneticOperations:
             fitness = r2 - complexity_penalty - stability_penalty
             return float(fitness)
         except Exception:
-            return -1e8
+            return -10.0  # Large negative R² score for invalid expressions

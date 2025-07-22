@@ -126,7 +126,7 @@ def evaluate_optimized_expressions(expressions: List[Expression], X: np.ndarray,
       
       fitness_scores.append(fitness)
     except Exception:
-      fitness_scores.append(-np.inf)  # Invalid expression
+      fitness_scores.append(-10.0)  # Large negative R² score for invalid expressions
       
   return fitness_scores
 

@@ -245,8 +245,9 @@ def inject_diversity_optimized(population: List[Expression],
                              injection_rate: float,
                              pop_manager: PopulationManager,
                              stagnation_counter: int,
-                             console_log: bool = True) -> List[Expression]:
-    """Optimized diversity injection with single sort and batch operations"""
+                             console_log: bool = True,
+                             protected_indices: Optional[List[int]] = None) -> List[Expression]:
+    """Optimized diversity injection with elite protection and single sort and batch operations"""
     
     # Adaptive injection rate - more conservative
     if stagnation_counter > 20:
@@ -259,20 +260,33 @@ def inject_diversity_optimized(population: List[Expression],
     # Single sort operation
     sorted_indices = np.argsort(fitness_scores)
     
-    # Pre-calculate index ranges - focus on worst performers only
-    worst_count = max(1, min(n_to_replace, len(population) // 4))  # Only worst 25%
-    bottom_quarter_count = len(population) // 4
+    # Protect elites and Great Powers from replacement
+    if protected_indices is None:
+        # Default protection: top 10% of population
+        elite_count = max(1, int(0.1 * len(population)))
+        protected_indices = sorted_indices[-elite_count:].tolist()
     
-    # Batch replacement strategy - more conservative
+    # Ensure protected_indices is not None for type checker
+    assert protected_indices is not None
+    protected_set = set(protected_indices)
+    
+    # Pre-calculate index ranges - focus on worst performers only, but exclude protected
+    available_indices = [idx for idx in sorted_indices if idx not in protected_set]
+    
+    # Focus on bottom performers among available (non-protected) indices
+    worst_count = max(1, min(n_to_replace, len(available_indices) // 2))  # Worst 50% of available
+    bottom_half_count = len(available_indices) // 2
+    
+    # Batch replacement strategy - more conservative, exclude protected
     replacement_indices = []
     
-    # Prioritize worst performers
-    replacement_indices.extend(sorted_indices[:worst_count])
+    # Prioritize worst performers (excluding protected)
+    replacement_indices.extend(available_indices[:worst_count])
     
-    # Only add random from bottom quarter if still needed
+    # Only add random from bottom half if still needed
     if len(replacement_indices) < n_to_replace:
         remaining_needed = n_to_replace - len(replacement_indices)
-        bottom_indices = sorted_indices[:bottom_quarter_count]
+        bottom_indices = available_indices[:bottom_half_count]
         available_bottom = [idx for idx in bottom_indices if idx not in replacement_indices]
         
         if available_bottom:
@@ -375,7 +389,7 @@ def evaluate_population_enhanced_optimized(population: List[Expression],
             fitness_scores.append(float(fitness))
             
         except Exception:
-            fitness_scores.append(-1e8)
+            fitness_scores.append(-10.0)  # Large negative R² score for invalid expressions
     
     return fitness_scores
 

@@ -48,7 +48,7 @@ class MultiScaleFitnessEvaluator:
         
         # Handle invalid predictions
         if np.any(np.isnan(y_pred)) or np.any(np.isinf(y_pred)):
-            return -1e6
+            return -10.0  # Large negative R² score for invalid predictions
         
         # Determine if we're dealing with extreme scales
         max_magnitude = max(np.max(np.abs(y_true)), np.max(np.abs(y_pred)))
@@ -155,11 +155,11 @@ class MultiScaleFitnessEvaluator:
             # Use scikit-learn's optimized R² implementation
             r2 = r2_score(y_true, y_pred)
             
-            # Clip to reasonable range for extreme cases
-            return max(-1e6, min(1.0, r2))
+            # Clip to reasonable range for extreme cases  
+            return max(-10.0, min(1.0, r2))  # R² scores should be between -10.0 and 1.0
             
         except Exception:
-            return -1e6
+            return -10.0  # Large negative R² score for calculation errors
     
     def get_detailed_metrics(self, y_true: np.ndarray, y_pred: np.ndarray) -> dict:
         """
@@ -176,7 +176,7 @@ class MultiScaleFitnessEvaluator:
             metrics['rmse'] = np.sqrt(np.mean((y_true - y_pred) ** 2))
             metrics['mae'] = np.mean(np.abs(y_true - y_pred))
         except Exception as e:
-            metrics['r2'] = -1e6
+            metrics['r2'] = -10.0  # Large negative R² score for errors
             metrics['rmse'] = 1e6
             metrics['mae'] = 1e6
         
@@ -244,6 +244,6 @@ def create_robust_fitness_function(use_multi_scale: bool = True):
                 # Apply parsimony penalty to R² score
                 return r2 - parsimony_coefficient
             except Exception:
-                return -1e6
+                return -10.0  # Large negative R² score for calculation errors
     
     return fitness_function

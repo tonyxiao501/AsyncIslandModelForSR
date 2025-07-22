@@ -20,6 +20,7 @@ from .expression_utils import to_sympy_expression, optimize_constants
 from .evolution_stats import get_evolution_stats, get_detailed_expressions
 from .data_scaling import DataScaler
 from .multi_scale_fitness import MultiScaleFitnessEvaluator
+from .great_powers import GreatPowers
 
 class MIMOSymbolicRegressor:
   """Enhanced Multiple Input Multiple Output Symbolic Regression Model with improved evolution dynamics"""
@@ -108,6 +109,9 @@ class MIMOSymbolicRegressor:
     
     # Population manager (will be initialized when n_inputs is set)
     self.pop_manager: Optional[PopulationManager] = None
+
+    # Great Powers mechanism - tracks best 5 expressions across all generations
+    self.great_powers = GreatPowers(max_powers=5)
 
     # Inter-thread communication components
     self.shared_manager = None
@@ -225,8 +229,8 @@ class MIMOSymbolicRegressor:
         fitness_scores.append(final_fitness)
         
       except Exception as e:
-        # Invalid expression
-        fitness_scores.append(-1e6)
+        # Invalid expression - use consistent R² penalty
+        fitness_scores.append(-10.0)  # Large negative R² score for invalid expressions
         if self.console_log and len(fitness_scores) <= 5:  # Only log first few failures
           print(f"Expression evaluation failed: {e}")
     
@@ -284,7 +288,7 @@ class MIMOSymbolicRegressor:
     population = generate_diverse_population_optimized(generator, self.n_inputs, self.population_size, self.max_depth, self.pop_manager)
 
     genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25)
-    best_fitness = -np.inf
+    best_fitness = -10.0  # Start with large negative R² score
     plateau_counter = 0
     if self.console_log:
       print(f"Starting evolution with {self.population_size} individuals for {self.generations} generations")
@@ -306,8 +310,19 @@ class MIMOSymbolicRegressor:
       generation_avg_fitness = np.mean(fitness_scores)
       self.fitness_history.append(generation_best_fitness)
 
-      # Update best solution
-      if generation_best_fitness > best_fitness + 1e-8:
+      # Update Great Powers mechanism
+      great_powers_updated = self.great_powers.update_powers(population, fitness_scores, generation)
+      
+      # Update best solution (now compare against Great Powers)
+      great_powers_best_fitness = self.great_powers.get_best_fitness()
+      if great_powers_best_fitness > best_fitness + 1e-8:
+        best_fitness = great_powers_best_fitness
+        best_expr = self.great_powers.get_best_expression()
+        if best_expr is not None:
+          self.best_expressions = [best_expr]
+        self.stagnation_counter = 0
+        plateau_counter = 0
+      elif generation_best_fitness > best_fitness + 1e-8:
         best_fitness = generation_best_fitness
         best_idx = fitness_scores.index(generation_best_fitness)
         self.best_expressions = [population[best_idx].copy()]
@@ -324,9 +339,53 @@ class MIMOSymbolicRegressor:
       # Enhanced progress reporting
       if self.console_log:
         if generation % 10 == 0 or generation < 20:
+          great_powers_info = f"GP={len(self.great_powers)}"
+          if great_powers_updated:
+            great_powers_info += "*"
+          
+          # Diagnose potential fitness drop issues
+          diagnosis = self.great_powers.diagnose_fitness_drop(generation_best_fitness, generation)
+          if diagnosis["status"] == "fitness_drop_detected":
+            great_powers_info += f" [WARN: Fitness drop detected! Gap={diagnosis['fitness_gap']:.6f}]"
+          
           print(f"Gen {generation:3d}: Best={best_fitness:.6f} Avg={generation_avg_fitness:.6f} "
                 f"Div={diversity_score:.3f} Stag={self.stagnation_counter} "
-                f"MutRate={self.current_mutation_rate:.3f}")
+                f"MutRate={self.current_mutation_rate:.3f} {great_powers_info}")
+          
+          # Detailed fitness drop warning
+          if diagnosis["status"] == "fitness_drop_detected" and generation % 10 == 0:
+            print(f"  >>> FITNESS DROP WARNING: Current best ({diagnosis['current_best']:.6f}) vs "
+                  f"Great Power best ({diagnosis['great_power_best']:.6f})")
+            print(f"  >>> Last Great Power update: generation {diagnosis['latest_great_power_generation']} "
+                  f"({diagnosis['generations_since_update']} generations ago)")
+      
+      # Emergency Great Powers injection if significant fitness drop detected
+      if len(self.great_powers) > 0:
+        diagnosis = self.great_powers.diagnose_fitness_drop(generation_best_fitness, generation)
+        if diagnosis["status"] == "fitness_drop_detected" and diagnosis["fitness_gap"] > 0.05:
+          if self.console_log:
+            print(f"  >>> EMERGENCY: Injecting Great Powers due to significant fitness drop!")
+          
+          # Emergency injection of Great Powers
+          population, fitness_scores = self.great_powers.inject_powers_into_population(
+            population, fitness_scores, injection_rate=0.3
+          )
+          
+          # Re-evaluate after injection
+          if self.use_multi_scale_fitness and self.fitness_evaluator:
+            fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled)
+          else:
+            fitness_scores = evaluate_population_enhanced_optimized(population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
+          
+          # Update best fitness after emergency injection
+          emergency_best = max(fitness_scores)
+          if emergency_best > best_fitness:
+            best_fitness = emergency_best
+            best_idx = fitness_scores.index(emergency_best)
+            self.best_expressions = [population[best_idx].copy()]
+            if self.console_log:
+              print(f"  >>> Emergency injection improved fitness to {emergency_best:.6f}")
+      
 
       # Adaptive parameter adjustment
       if self.adaptive_rates:
@@ -340,25 +399,40 @@ class MIMOSymbolicRegressor:
       if self.stagnation_counter >= 25:  # Restored to original 25 for later restart
         if self.console_log:
           print(f"Population restart at generation {generation} (stagnation: {self.stagnation_counter})")
-        population = restart_population_enhanced(population, fitness_scores, generator, self.population_size, self.n_inputs, self.pop_manager)
+          print(f"  Great Powers before restart: {len(self.great_powers)}")
+          if len(self.great_powers) > 0:
+            print(f"  Best Great Power fitness: {self.great_powers.get_best_fitness():.6f}")
+        
+        # Enhanced restart that preserves Great Powers
+        population = self._restart_population_with_great_powers(population, fitness_scores, generator)
         self.stagnation_counter = 0
         plateau_counter = 0
         continue
 
       # Enhanced diversity injection for moderate stagnation - more conservative
       if diversity_score < 0.3:  # Only intervene when diversity is very low
+        # Get protected indices from Great Powers
+        protected_indices = self.great_powers.protect_elites_from_injection(
+          population, fitness_scores, elite_fraction=0.15
+        )
         population = inject_diversity_optimized(
           population, fitness_scores, generator, 0.25,  # Inject 25% new diverse expressions
           self.pop_manager,
-          self.stagnation_counter, self.console_log
+          self.stagnation_counter, self.console_log,
+          protected_indices=protected_indices
         )
         if self.console_log:
-          print(f"Emergency diversity injection at generation {generation} (diversity={diversity_score:.3f})")
+          print(f"Emergency diversity injection at generation {generation} (diversity={diversity_score:.3f}, protected={len(protected_indices)})")
       elif self.stagnation_counter > 8 and diversity_score < 0.5:  # Later intervention
+        # Get protected indices from Great Powers
+        protected_indices = self.great_powers.protect_elites_from_injection(
+          population, fitness_scores, elite_fraction=0.1
+        )
         population = inject_diversity_optimized(
           population, fitness_scores, generator, 0.15,  # Reduced injection rate
           self.pop_manager,
-          self.stagnation_counter, self.console_log
+          self.stagnation_counter, self.console_log,
+          protected_indices=protected_indices
         )
         if self.console_log:
           print(f"Diversity injection at generation {generation} (diversity={diversity_score:.3f})")
@@ -410,6 +484,22 @@ class MIMOSymbolicRegressor:
         new_population = self._eliminate_duplicates(new_population, generator, 0.3)
         if self.console_log:
           print(f"Duplicate elimination at generation {generation} (diversity={diversity_score:.3f})")
+
+      # Periodic injection of Great Powers to maintain them in population
+      if generation > 0 and generation % 15 == 0 and len(self.great_powers) > 0:
+        # Re-evaluate population after reproduction changes
+        if self.use_multi_scale_fitness and self.fitness_evaluator:
+          current_fitness = self._evaluate_population_multi_scale(new_population, X_scaled, y_scaled)
+        else:
+          current_fitness = evaluate_population_enhanced_optimized(new_population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
+        
+        new_population, current_fitness = self.great_powers.inject_powers_into_population(
+          new_population, current_fitness, injection_rate=0.1
+        )
+        fitness_scores = current_fitness  # Update fitness scores for next iteration
+        
+        if self.console_log:
+          print(f"Great Powers injection at generation {generation} (injected up to {min(len(self.great_powers), max(1, int(0.1 * len(new_population))))} powers)")
 
       population = new_population
 
@@ -463,10 +553,19 @@ class MIMOSymbolicRegressor:
     
     start_time = time.time()
     
-    # Get top expressions from final population for optimization (use scaled data consistently)
+    # Get all candidates from Great Powers and current population
+    all_candidates = self.great_powers.get_all_candidates(population, fitness_scores)
+    
+    if self.console_log:
+      print(f"Final candidate pool: {len(all_candidates)} expressions ({len(self.great_powers)} from Great Powers)")
+      for i, candidate in enumerate(all_candidates[:5]):  # Show top 5
+        print(f"  {i+1}. {candidate['source']}: fitness={candidate['fitness']:.6f}")
+    
+    # Re-evaluate all candidates with current scaled data to ensure consistency
+    candidate_expressions = [candidate['expression'] for candidate in all_candidates]
     if self.use_multi_scale_fitness and self.fitness_evaluator:
       final_fitness_scores = []
-      for expr in population:
+      for expr in candidate_expressions:
         try:
           predictions = expr.evaluate(X_scaled)
           if predictions.ndim == 1:
@@ -476,11 +575,14 @@ class MIMOSymbolicRegressor:
           )
           final_fitness_scores.append(fitness)
         except:
-          final_fitness_scores.append(-1e6)
+          final_fitness_scores.append(-10.0)  # Large negative R² score for invalid expressions
     else:
-      final_fitness_scores = evaluate_population_enhanced_optimized(population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
-    top_indices = sorted(range(len(final_fitness_scores)), key=lambda i: final_fitness_scores[i], reverse=True)[:min(10, len(population))]
-    top_expressions = [population[i] for i in top_indices]
+      final_fitness_scores = evaluate_population_enhanced_optimized(candidate_expressions, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
+    
+    # Select top candidates for final optimization
+    top_count = min(10, len(candidate_expressions))
+    top_indices = sorted(range(len(final_fitness_scores)), key=lambda i: final_fitness_scores[i], reverse=True)[:top_count]
+    top_expressions = [candidate_expressions[i] for i in top_indices]
     
     # Apply final optimizations (use scaled data for consistency with training)
     from .expression_utils import optimize_final_expressions, evaluate_optimized_expressions
@@ -502,7 +604,7 @@ class MIMOSymbolicRegressor:
       print(f"Optimization improved {improvement_count}/{len(optimized_expressions)} expressions")
 
     # Final reporting
-    final_best = max(self.fitness_history) if self.fitness_history else -np.inf
+    final_best = max(self.fitness_history) if self.fitness_history else -10.0
     if self.console_log:
       print(f"\nEvolution completed:")
       print(f"Final best fitness: {final_best:.6f}")
@@ -578,7 +680,7 @@ class MIMOSymbolicRegressor:
           print(f"Warning: Extreme R² value ({r2:.2e}) detected, likely due to scaling mismatch")
         return 0.0  # Return neutral score for scaling mismatches
       
-      return max(-1.0, min(1.0, r2))  # Clamp to reasonable R² range
+      return max(-10.0, min(1.0, r2))  # Clamp to consistent R² range (same as evaluation)
     
     except Exception as e:
       if self.console_log:
@@ -705,4 +807,39 @@ class MIMOSymbolicRegressor:
           from .expression_tree.core.node import VariableNode
           new_population[idx] = Expression(VariableNode(0))
 
+    return new_population
+
+  def _restart_population_with_great_powers(self, population: List[Expression], 
+                                          fitness_scores: List[float], 
+                                          generator) -> List[Expression]:
+    """
+    Enhanced population restart that preserves Great Powers.
+    """
+    from .adaptive_evolution import restart_population_enhanced
+    
+    # Ensure we have valid values for required parameters
+    if self.n_inputs is None:
+      raise ValueError("n_inputs must be set before population restart")
+    if self.pop_manager is None:
+      raise ValueError("pop_manager must be initialized before population restart")
+    
+    # Get the regular restart population
+    new_population = restart_population_enhanced(
+      population, fitness_scores, generator, self.population_size, self.n_inputs, self.pop_manager
+    )
+    
+    # Inject Great Powers into the restarted population if we have them
+    if len(self.great_powers) > 0:
+      # Create dummy fitness scores for the new population (will be re-evaluated anyway)
+      new_fitness_scores = [-10.0] * len(new_population)  # Use consistent invalid fitness value
+      
+      # Inject Great Powers
+      new_population, _ = self.great_powers.inject_powers_into_population(
+        new_population, new_fitness_scores, injection_rate=0.2  # 20% for restart
+      )
+      
+      if self.console_log:
+        injected_count = min(len(self.great_powers), max(1, int(0.2 * len(new_population))))
+        print(f"  Injected {injected_count} Great Powers into restart population")
+    
     return new_population
