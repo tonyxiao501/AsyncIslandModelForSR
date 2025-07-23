@@ -54,7 +54,7 @@ def main():
     purge_percentage=0.15,       
     exchange_interval=15,       
     import_percentage=0.08,
-    enable_data_scaling=True,
+    enable_data_scaling=False,
     use_multi_scale_fitness=False,
     # Early termination and late extension parameters
     enable_early_termination=True,
