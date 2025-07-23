@@ -15,11 +15,11 @@ class GreatPowers:
     Includes advanced redundancy elimination to prevent duplicate expressions.
     """
     
-    def __init__(self, max_powers: int = 5, similarity_threshold: float = 0.85):
+    def __init__(self, max_powers: int = 5, similarity_threshold: float = 0.98):
         self.max_powers = max_powers
         self.powers: List[Dict] = []  # List of {'expression': Expression, 'fitness': float, 'generation': int}
         self.generation_updates = 0
-        self.similarity_threshold = similarity_threshold  # Threshold for considering expressions similar
+        self.similarity_threshold = similarity_threshold  # Threshold for considering expressions similar (increased to 0.98 to be much less aggressive)
         self.redundancy_stats = {
             'rejected_duplicates': 0,
             'semantic_rejections': 0,
@@ -57,11 +57,12 @@ class GreatPowers:
             if structural_similarity >= self.similarity_threshold:
                 return True, f"structural_similarity_{structural_similarity:.3f}_with_power_{i+1}"
             
-            # 4. Semantic similarity check (if data available)
-            if X is not None:
-                semantic_similarity = self._calculate_semantic_similarity(candidate_expr, existing_expr, X)
-                if semantic_similarity >= self.similarity_threshold + 0.05:  # Slightly higher threshold for semantic
-                    return True, f"semantic_similarity_{semantic_similarity:.3f}_with_power_{i+1}"
+            # 4. Semantic similarity check (if data available) - DISABLED for better performance
+            # Semantic similarity was being too aggressive and never triggered with high thresholds anyway
+            # if X is not None:
+            #     semantic_similarity = self._calculate_semantic_similarity(candidate_expr, existing_expr, X)
+            #     if semantic_similarity >= self.similarity_threshold + 0.05:  # Slightly higher threshold for semantic
+            #         return True, f"semantic_similarity_{semantic_similarity:.3f}_with_power_{i+1}"
         
         return False, "not_redundant"
     
@@ -183,19 +184,52 @@ class GreatPowers:
         best_fitness = fitness_scores[best_idx]
         best_expr = population[best_idx].copy()
         
-        # CHECK FOR REDUNDANCY FIRST - reject if redundant
+        # CHECK FOR REDUNDANCY - but allow significantly better expressions even if similar
         is_redundant, redundancy_reason = self._is_expression_redundant(best_expr, X)
         if is_redundant:
-            # Update redundancy statistics
-            if "exact_duplicate" in redundancy_reason:
-                self.redundancy_stats['rejected_duplicates'] += 1
-            elif "semantic_similarity" in redundancy_reason:
-                self.redundancy_stats['semantic_rejections'] += 1
-            elif "structural_similarity" in redundancy_reason or "string_similarity" in redundancy_reason:
-                self.redundancy_stats['structural_rejections'] += 1
+            # Extract similar power index from redundancy reason
+            similar_power_idx = None
+            if "_with_power_" in redundancy_reason:
+                try:
+                    similar_power_idx = int(redundancy_reason.split("_with_power_")[1]) - 1  # Convert to 0-based index
+                except:
+                    pass
             
-            # Expression is redundant, don't add it
-            return False
+            # If we found which power it's similar to, check if candidate is significantly better
+            if similar_power_idx is not None and 0 <= similar_power_idx < len(self.powers):
+                existing_fitness = self.powers[similar_power_idx]['fitness']
+                fitness_improvement = best_fitness - existing_fitness
+                
+                # VERY RELAXED: Allow any improvement, even tiny ones (0.001 = 0.1% R² improvement)
+                if fitness_improvement > 0.001:
+                    # This is an improvement, allow it despite similarity
+                    pass  # Continue with normal processing
+                else:
+                    # Only reject if truly not better and exact duplicate
+                    if "exact_duplicate" in redundancy_reason:
+                        self.redundancy_stats['rejected_duplicates'] += 1
+                        return False  # Only reject exact duplicates that aren't better
+                    else:
+                        # For all other similarities, allow if fitness is decent
+                        if best_fitness < 0.85:  # Only reject if fitness is below 85%
+                            if "semantic_similarity" in redundancy_reason:
+                                self.redundancy_stats['semantic_rejections'] += 1
+                            elif "structural_similarity" in redundancy_reason or "string_similarity" in redundancy_reason:
+                                self.redundancy_stats['structural_rejections'] += 1
+                            return False
+            else:
+                # Couldn't determine which power it's similar to, be very lenient
+                if "exact_duplicate" in redundancy_reason:
+                    self.redundancy_stats['rejected_duplicates'] += 1
+                    return False  # Always reject exact duplicates
+                else:
+                    # For other similarities, only reject if fitness is very poor
+                    if best_fitness < 0.70:  # Only reject if fitness is below 70%
+                        if "semantic_similarity" in redundancy_reason:
+                            self.redundancy_stats['semantic_rejections'] += 1
+                        elif "structural_similarity" in redundancy_reason or "string_similarity" in redundancy_reason:
+                            self.redundancy_stats['structural_rejections'] += 1
+                        return False
         
         # Apply complexity bias: prefer simpler expressions at similar fitness levels
         complexity = best_expr.complexity()

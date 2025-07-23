@@ -186,13 +186,31 @@ class EnsembleMIMORegressor:
     # Extract expressions for optimization
     candidate_expressions = [res['expression_obj'] for res in top_results]
     
-    # Apply final optimizations
-    from .expression_utils import optimize_final_expressions, evaluate_optimized_expressions
-    optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
-    
-    # Re-evaluate with optimized constants and get new fitness scores
+    # Apply final optimizations using the same scaling as training
+    from .expression_utils import optimize_final_expressions
     parsimony_coeff = self.regressor_kwargs.get('parsimony_coefficient', 0.01)
-    optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
+    
+    if self.shared_data_scaler is not None:
+      # Use scaled data for optimization consistency
+      X_scaled = self.shared_data_scaler.transform_input(X)
+      y_scaled = self.shared_data_scaler.transform_output(y)
+      optimized_expressions = optimize_final_expressions(candidate_expressions, X_scaled, y_scaled)
+      
+      # Re-evaluate with optimized constants using scaled data but calculate fitness on original scale
+      # Use the first fitted regressor's evaluation method for consistency
+      if (hasattr(self, 'fitted_regressors') and self.fitted_regressors and 
+          hasattr(self.fitted_regressors[0], '_evaluate_population_enhanced_with_scaling')):
+        optimized_fitness_scores = self.fitted_regressors[0]._evaluate_population_enhanced_with_scaling(
+          optimized_expressions, X_scaled, y_scaled, X, y)
+      else:
+        # Fallback to the old method if no fitted regressors available
+        from .expression_utils import evaluate_optimized_expressions
+        optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
+    else:
+      # No scaling used, proceed with original data
+      optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
+      from .expression_utils import evaluate_optimized_expressions
+      optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
     
     # Update results with optimized fitness scores and re-rank
     for i, (optimized_expr, new_fitness) in enumerate(zip(optimized_expressions, optimized_fitness_scores)):

@@ -198,10 +198,92 @@ class MIMOSymbolicRegressor:
       if self.console_log:
         print(f"Debug CSV write failed: {e}")
 
+  def _evaluate_population_enhanced_with_scaling(self, population: List[Expression], 
+                                               X_scaled: np.ndarray, y_scaled: np.ndarray,
+                                               X_original: np.ndarray, y_original: np.ndarray) -> List[float]:
+    """
+    Enhanced population evaluation that properly handles scaling.
+    Evaluates fitness on original scale to ensure true performance measurement.
+    """
+    from sklearn.metrics import r2_score
+    fitness_scores = []
+    
+    # Pre-calculate population diversity metrics once (if pop_manager available)
+    base_diversity_bonus = 0.0
+    if self.pop_manager is not None:
+        diversity_metrics = self.pop_manager.calculate_population_diversity_optimized(population)
+        base_diversity_bonus = diversity_metrics['overall'] * 0.0005
+    
+    for i, expr in enumerate(population):
+        try:
+            # Get predictions on scaled input
+            predictions_scaled = expr.evaluate(X_scaled)
+            if predictions_scaled.ndim == 1:
+                predictions_scaled = predictions_scaled.reshape(-1, 1)
+            
+            # Transform predictions back to original scale for fitness evaluation
+            if self.enable_data_scaling and self.data_scaler is not None:
+                try:
+                    predictions_original = self.data_scaler.inverse_transform_output(predictions_scaled)
+                except Exception as e:
+                    # If inverse transform fails, heavily penalize
+                    fitness_scores.append(-10.0)
+                    continue
+            else:
+                predictions_original = predictions_scaled
+            
+            # Core fitness calculation using R² score on ORIGINAL scale
+            try:
+                r2 = r2_score(y_original.flatten(), predictions_original.flatten())
+            except Exception:
+                # Fallback for edge cases
+                ss_res = np.sum((y_original - predictions_original) ** 2)
+                ss_tot = np.sum((y_original - np.mean(y_original)) ** 2)
+                if ss_tot == 0:
+                    r2 = 1.0 if ss_res == 0 else 0.0
+                else:
+                    r2 = 1.0 - (ss_res / ss_tot)
+            
+            # Cached complexity penalty
+            if self.pop_manager is not None:
+                complexity = self.pop_manager.get_expression_complexity(expr)
+            else:
+                complexity = expr.complexity()
+            complexity_penalty = self.parsimony_coefficient * complexity
+            
+            # Stability penalty - check both scaled and original predictions
+            stability_penalty = 0.0
+            max_abs_pred_scaled = np.max(np.abs(predictions_scaled))
+            max_abs_pred_original = np.max(np.abs(predictions_original))
+            
+            if (max_abs_pred_scaled > 1e8 or max_abs_pred_original > 1e8):
+                stability_penalty = 0.5
+            elif (max_abs_pred_scaled > 1e6 or max_abs_pred_original > 1e6):
+                stability_penalty = 0.3
+            elif (max_abs_pred_scaled > 1e4 or max_abs_pred_original > 1e4):
+                stability_penalty = 0.1
+            
+            if (np.any(~np.isfinite(predictions_scaled)) or np.any(~np.isfinite(predictions_original))):
+                stability_penalty += 0.5  # Heavily penalize infinite/NaN
+            
+            # Apply small diversity bonus (as R² adjustment)
+            diversity_bonus = base_diversity_bonus * 0.01
+            
+            # Final R² based fitness score
+            fitness = r2 - complexity_penalty - stability_penalty + diversity_bonus
+            fitness_scores.append(float(fitness))
+            
+        except Exception:
+            fitness_scores.append(-10.0)  # Large negative R² score for invalid expressions
+    
+    return fitness_scores
+
   def _evaluate_population_multi_scale(self, population: List[Expression], 
-                                      X: np.ndarray, y: np.ndarray) -> List[float]:
+                                      X_scaled: np.ndarray, y_scaled: np.ndarray,
+                                      X_original: np.ndarray, y_original: np.ndarray) -> List[float]:
     """
     Enhanced population evaluation using multi-scale fitness metrics.
+    Evaluates fitness on original scale to ensure true performance measurement.
     All fitness values are now R² based for consistency.
     """
     from sklearn.metrics import r2_score
@@ -209,23 +291,36 @@ class MIMOSymbolicRegressor:
     
     for expr in population:
       try:
-        # Get predictions
-        predictions = expr.evaluate(X)
-        if predictions.ndim == 1:
-          predictions = predictions.reshape(-1, 1)
+        # Get predictions on scaled input
+        predictions_scaled = expr.evaluate(X_scaled)
+        if predictions_scaled.ndim == 1:
+          predictions_scaled = predictions_scaled.reshape(-1, 1)
         
-        # Use multi-scale fitness evaluator (now returns R² equivalent)
+        # Transform predictions back to original scale for fitness evaluation
+        if self.enable_data_scaling and self.data_scaler is not None:
+          try:
+            predictions_original = self.data_scaler.inverse_transform_output(predictions_scaled)
+          except Exception as e:
+            # If inverse transform fails, heavily penalize
+            fitness_scores.append(-10.0)
+            if self.console_log and len(fitness_scores) <= 5:
+              print(f"Inverse transform failed during fitness evaluation: {e}")
+            continue
+        else:
+          predictions_original = predictions_scaled
+        
+        # Use multi-scale fitness evaluator on ORIGINAL scale data
         if self.fitness_evaluator:
           base_fitness = self.fitness_evaluator.evaluate_fitness(
-            y.flatten(), predictions.flatten(), 0.0  # No parsimony penalty here
+            y_original.flatten(), predictions_original.flatten(), 0.0  # No parsimony penalty here
           )
         else:
-          # Fallback to standard R² using scikit-learn
+          # Fallback to standard R² using scikit-learn on ORIGINAL scale
           try:
-            base_fitness = r2_score(y.flatten(), predictions.flatten())
+            base_fitness = r2_score(y_original.flatten(), predictions_original.flatten())
           except Exception:
-            ss_res = np.sum((y - predictions) ** 2)
-            ss_tot = np.sum((y - np.mean(y)) ** 2)
+            ss_res = np.sum((y_original - predictions_original) ** 2)
+            ss_tot = np.sum((y_original - np.mean(y_original)) ** 2)
             base_fitness = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
         
         # Apply complexity penalty (as R² adjustment)
@@ -233,14 +328,19 @@ class MIMOSymbolicRegressor:
         complexity_penalty = self.parsimony_coefficient * complexity
         
         # Apply stability penalty for extreme predictions (as R² adjustment)
+        # Check both scaled and original predictions for stability
         stability_penalty = 0.0
-        max_abs_pred = np.max(np.abs(predictions))
-        if max_abs_pred > 1e10:
-          stability_penalty = 0.5  # Adjust to R² scale
-        elif max_abs_pred > 1e8:
-          stability_penalty = 0.3
-        elif np.any(np.isnan(predictions)) or np.any(np.isinf(predictions)):
+        max_abs_pred_scaled = np.max(np.abs(predictions_scaled))
+        max_abs_pred_original = np.max(np.abs(predictions_original))
+        
+        if (max_abs_pred_scaled > 1e10 or max_abs_pred_original > 1e10 or
+            np.any(np.isnan(predictions_scaled)) or np.any(np.isinf(predictions_scaled)) or
+            np.any(np.isnan(predictions_original)) or np.any(np.isinf(predictions_original))):
           stability_penalty = 1.0  # Heavy penalty in R² scale
+        elif max_abs_pred_scaled > 1e8 or max_abs_pred_original > 1e8:
+          stability_penalty = 0.5
+        elif max_abs_pred_scaled > 1e6 or max_abs_pred_original > 1e6:
+          stability_penalty = 0.3
         
         final_fitness = base_fitness - complexity_penalty - stability_penalty
         fitness_scores.append(final_fitness)
@@ -320,11 +420,11 @@ class MIMOSymbolicRegressor:
 
     generation = 0
     while generation < self.generations:
-      # Evaluate fitness with enhanced scoring (use scaled data)
+      # Evaluate fitness with enhanced scoring (use scaled data for expressions, original data for fitness)
       if self.use_multi_scale_fitness and self.fitness_evaluator:
-        fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled)
+        fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled, X, y)
       else:
-        fitness_scores = evaluate_population_enhanced_optimized(population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
+        fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X, y)
 
       # Calculate diversity metrics
       diversity_score = calculate_population_diversity(population)
@@ -427,9 +527,9 @@ class MIMOSymbolicRegressor:
           
           # Re-evaluate after injection
           if self.use_multi_scale_fitness and self.fitness_evaluator:
-            fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled)
+            fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled, X, y)
           else:
-            fitness_scores = evaluate_population_enhanced_optimized(population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
+            fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X, y)
           
           # Update best fitness after emergency injection
           emergency_best = max(fitness_scores)
@@ -553,9 +653,9 @@ class MIMOSymbolicRegressor:
       if generation > 0 and generation % 15 == 0 and len(self.great_powers) > 0:
         # Re-evaluate population after reproduction changes
         if self.use_multi_scale_fitness and self.fitness_evaluator:
-          current_fitness = self._evaluate_population_multi_scale(new_population, X_scaled, y_scaled)
+          current_fitness = self._evaluate_population_multi_scale(new_population, X_scaled, y_scaled, X, y)
         else:
-          current_fitness = evaluate_population_enhanced_optimized(new_population, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
+          current_fitness = self._evaluate_population_enhanced_with_scaling(new_population, X_scaled, y_scaled, X, y)
         
         new_population, current_fitness = self.great_powers.inject_powers_into_population(
           new_population, current_fitness, injection_rate=0.1
@@ -628,35 +728,27 @@ class MIMOSymbolicRegressor:
       for i, candidate in enumerate(all_candidates[:5]):  # Show top 5
         print(f"  {i+1}. {candidate['source']}: fitness={candidate['fitness']:.6f}")
     
-    # Re-evaluate all candidates with current scaled data to ensure consistency
+    # Re-evaluate all candidates with consistent scaling approach
     candidate_expressions = [candidate['expression'] for candidate in all_candidates]
     if self.use_multi_scale_fitness and self.fitness_evaluator:
-      final_fitness_scores = []
-      for expr in candidate_expressions:
-        try:
-          predictions = expr.evaluate(X_scaled)
-          if predictions.ndim == 1:
-            predictions = predictions.reshape(-1, 1)
-          fitness = self.fitness_evaluator.evaluate_fitness(
-            y_scaled.flatten(), predictions.flatten(), self.parsimony_coefficient
-          )
-          final_fitness_scores.append(fitness)
-        except:
-          final_fitness_scores.append(-10.0)  # Large negative R² score for invalid expressions
+      final_fitness_scores = self._evaluate_population_multi_scale(candidate_expressions, X_scaled, y_scaled, X, y)
     else:
-      final_fitness_scores = evaluate_population_enhanced_optimized(candidate_expressions, X_scaled, y_scaled, self.parsimony_coefficient, self.pop_manager)
+      final_fitness_scores = self._evaluate_population_enhanced_with_scaling(candidate_expressions, X_scaled, y_scaled, X, y)
     
     # Select top candidates for final optimization
     top_count = min(10, len(candidate_expressions))
     top_indices = sorted(range(len(final_fitness_scores)), key=lambda i: final_fitness_scores[i], reverse=True)[:top_count]
     top_expressions = [candidate_expressions[i] for i in top_indices]
     
-    # Apply final optimizations (use scaled data for consistency with training)
-    from .expression_utils import optimize_final_expressions, evaluate_optimized_expressions
+    # Apply final optimizations (optimization should be done on the same scale as training)
+    from .expression_utils import optimize_final_expressions
     optimized_expressions = optimize_final_expressions(top_expressions, X_scaled, y_scaled)
     
-    # Re-evaluate with optimized constants (use scaled data)
-    optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X_scaled, y_scaled, self.parsimony_coefficient)
+    # Re-evaluate with optimized constants using consistent scaling approach (evaluate on original scale)
+    if self.use_multi_scale_fitness and self.fitness_evaluator:
+      optimized_fitness_scores = self._evaluate_population_multi_scale(optimized_expressions, X_scaled, y_scaled, X, y)
+    else:
+      optimized_fitness_scores = self._evaluate_population_enhanced_with_scaling(optimized_expressions, X_scaled, y_scaled, X, y)
     
     # Select best expressions based on optimized fitness
     best_indices = sorted(range(len(optimized_fitness_scores)), key=lambda i: optimized_fitness_scores[i], reverse=True)
