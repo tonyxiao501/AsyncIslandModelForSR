@@ -55,7 +55,14 @@ def main():
     exchange_interval=15,       
     import_percentage=0.08,
     enable_data_scaling=True,
-    use_multi_scale_fitness=False
+    use_multi_scale_fitness=False,
+    # Early termination and late extension parameters
+    enable_early_termination=True,
+    early_termination_threshold=0.99,     # Terminate if R² >= 0.99
+    early_termination_check_interval=10,  # Check every 10 generations
+    enable_late_extension=True,
+    late_extension_threshold=0.95,        # Extend if R² < 0.95 at the end
+    late_extension_generations=50         # Add 50 more generations if needed
   )
 
   print("\nTraining symbolic regression ensemble model...")

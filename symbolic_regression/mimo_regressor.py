@@ -52,7 +52,14 @@ class MIMOSymbolicRegressor:
                shared_data_scaler: Optional[DataScaler] = None,  # Pre-fitted scaler for ensemble consistency
                # Multi-scale fitness evaluation
                use_multi_scale_fitness: bool = True,
-               extreme_value_threshold: float = 1e6
+               extreme_value_threshold: float = 1e6,
+               # Early termination and late extension parameters
+               enable_early_termination: bool = True,
+               early_termination_threshold: float = 0.99,
+               early_termination_check_interval: int = 10,
+               enable_late_extension: bool = True,
+               late_extension_threshold: float = 0.95,
+               late_extension_generations: int = 50
                ):
 
     self.population_size = population_size
@@ -94,6 +101,15 @@ class MIMOSymbolicRegressor:
         use_relative_metrics=True,
         extreme_value_threshold=extreme_value_threshold
       )
+
+    # Early termination and late extension parameters
+    self.enable_early_termination = enable_early_termination
+    self.early_termination_threshold = early_termination_threshold
+    self.early_termination_check_interval = early_termination_check_interval
+    self.enable_late_extension = enable_late_extension
+    self.late_extension_threshold = late_extension_threshold
+    self.late_extension_generations = late_extension_generations
+    self.late_extension_triggered = False  # Track if extension was already triggered
 
     # Evolution state tracking
     self.stagnation_counter = 0
@@ -287,6 +303,7 @@ class MIMOSymbolicRegressor:
     self.stagnation_counter = 0
     self.current_mutation_rate = self.mutation_rate
     self.current_crossover_rate = self.crossover_rate
+    self.late_extension_triggered = False  # Reset late extension flag
 
     # Generate diverse initial population
     if self.n_inputs is None:
@@ -297,10 +314,12 @@ class MIMOSymbolicRegressor:
     genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25)
     best_fitness = -10.0  # Start with large negative R² score
     plateau_counter = 0
+    original_generations = self.generations  # Store original generation count for extension
     if self.console_log:
       print(f"Starting evolution with {self.population_size} individuals for {self.generations} generations")
 
-    for generation in range(self.generations):
+    generation = 0
+    while generation < self.generations:
       # Evaluate fitness with enhanced scoring (use scaled data)
       if self.use_multi_scale_fitness and self.fitness_evaluator:
         fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled)
@@ -342,6 +361,29 @@ class MIMOSymbolicRegressor:
       if generation > 0 and best_fitness - self.best_fitness_history[-1] > 1e-3:
         last_update = generation
       self.best_fitness_history.append(best_fitness)
+
+      # Early termination check - test every N generations
+      if (self.enable_early_termination and 
+          generation > 0 and 
+          generation % self.early_termination_check_interval == 0):
+        if best_fitness >= self.early_termination_threshold:
+          if self.console_log:
+            print(f"\n*** EARLY TERMINATION ***")
+            print(f"Generation {generation}: R² score ({best_fitness:.6f}) reached threshold ({self.early_termination_threshold})")
+            print(f"Terminating evolution early after {generation + 1} generations")
+          break
+
+      # Late extension check - only trigger once at the end if threshold not met
+      if (self.enable_late_extension and 
+          not self.late_extension_triggered and 
+          generation == original_generations - 1):  # Last generation of original run
+        if best_fitness < self.late_extension_threshold:
+          self.late_extension_triggered = True
+          self.generations += self.late_extension_generations
+          if self.console_log:
+            print(f"\n*** LATE EXTENSION ***")
+            print(f"Generation {generation}: R² score ({best_fitness:.6f}) below threshold ({self.late_extension_threshold})")
+            print(f"Extending evolution by {self.late_extension_generations} generations (total: {self.generations})")
 
       # Enhanced progress reporting
       if self.console_log:
@@ -554,6 +596,9 @@ class MIMOSymbolicRegressor:
       if generation % 10 == 0:  # Only log every 10 generations instead of every generation
         self._write_debug_csv(generation, population, fitness_scores, diversity_score)
 
+      # Increment generation counter for while loop
+      generation += 1
+
     # FINAL OPTIMIZATION PHASE: Apply expensive operations to top expressions only
     if self.console_log:
       print(f"\nApplying final optimizations to top expressions...")
@@ -612,9 +657,18 @@ class MIMOSymbolicRegressor:
 
     # Final reporting
     final_best = max(self.fitness_history) if self.fitness_history else -10.0
+    actual_generations = len(self.fitness_history)
     if self.console_log:
       print(f"\nEvolution completed:")
+      print(f"Actual generations run: {actual_generations}")
       print(f"Final best fitness: {final_best:.6f}")
+      
+      # Report early termination or late extension
+      if self.enable_early_termination and actual_generations < original_generations:
+        print(f"*** Early termination triggered (saved {original_generations - actual_generations} generations)")
+      elif self.late_extension_triggered:
+        print(f"*** Late extension triggered (added {self.late_extension_generations} generations)")
+      
       if self.best_expressions:
         print(f"Best expression: {self.best_expressions[0].to_string()}")
         print(f"Expression complexity: {self.best_expressions[0].complexity():.2f}")
