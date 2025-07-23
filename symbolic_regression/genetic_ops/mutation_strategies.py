@@ -9,7 +9,7 @@ import numpy as np
 import random
 from typing import Optional, Dict, List
 
-from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
+from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode, ScalingOpNode
 from ..expression_tree.utils.simplifier import ExpressionSimplifier
 from ..generator import ExpressionGenerator
 from .context_analysis import ExpressionContextAnalyzer
@@ -62,12 +62,16 @@ class MutationStrategies:
                         node.value = random.uniform(-3, 3)
                     changed = True
                     
-                elif isinstance(node, (BinaryOpNode, UnaryOpNode)):
+                elif isinstance(node, (BinaryOpNode, UnaryOpNode, ScalingOpNode)):
                     # Grammar-aware operator mutation
                     if isinstance(node, BinaryOpNode):
                         changed = self._mutate_binary_operator(node) or changed
                     elif isinstance(node, UnaryOpNode):
                         changed = self._mutate_unary_operator(node) or changed
+                    elif isinstance(node, ScalingOpNode):
+                        # TODO: BETTER MUTSTION
+                        node.power += random.choice([-1, 1])
+                        changed = True
         
         if changed:
             mutated.clear_cache()
@@ -297,6 +301,9 @@ class MutationStrategies:
                     node.operator = random.choice(['sin', 'cos', 'exp', 'log', 'sqrt'])
                     if node.operator != old_op:
                         changed = True
+                elif isinstance(node, ScalingOpNode):
+                    node.power = random.randint(-3, 3)
+                    changed = True
 
         if changed:
             mutated.clear_cache()
@@ -337,7 +344,8 @@ class MutationStrategies:
         target_node = random.choice(nodes)
 
         # Create new operation with target as operand
-        if random.random() < 0.7:  # Binary operation
+        node_type = random.choices(['binary', 'unary', 'scale'], weights=[0.6, 0.3, 0.1])[0]
+        if node_type == 'binary':  # Binary operation
             op = random.choice(['+', '-', '*', '/'])
             other_operand = self.generator._generate_node(0, 2)
 
@@ -345,9 +353,12 @@ class MutationStrategies:
                 new_node = BinaryOpNode(op, target_node.copy(), other_operand)
             else:
                 new_node = BinaryOpNode(op, other_operand, target_node.copy())
-        else:  # Unary operation
+        elif node_type == 'unary':  # Unary operation
             op = random.choice(['sin', 'cos', 'sqrt'])  # Safer unary ops
             new_node = UnaryOpNode(op, target_node.copy())
+        else: # Scaling operation
+            power = random.randint(-3, 3)
+            new_node = ScalingOpNode(power, target_node.copy())
 
         # Replace target with new node
         if self._replace_node_in_tree(mutated.root, target_node, new_node):
@@ -397,6 +408,12 @@ class MutationStrategies:
                 return True
             else:
                 return self._replace_node_in_tree(root.operand, target, replacement)
+        elif isinstance(root, ScalingOpNode):
+            if root.operand == target:
+                root.operand = replacement
+                return True
+            else:
+                return self._replace_node_in_tree(root.operand, target, replacement)
 
         return False
 
@@ -407,5 +424,7 @@ class MutationStrategies:
             nodes.extend(self._get_all_nodes(node.left))
             nodes.extend(self._get_all_nodes(node.right))
         elif isinstance(node, UnaryOpNode):
+            nodes.extend(self._get_all_nodes(node.operand))
+        elif isinstance(node, ScalingOpNode):
             nodes.extend(self._get_all_nodes(node.operand))
         return nodes

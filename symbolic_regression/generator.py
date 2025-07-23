@@ -1,6 +1,6 @@
 import random
 from typing import List, Optional
-from .expression_tree import Expression, Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
+from .expression_tree import Expression, Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 from .expression_tree.utils.simplifier import ExpressionSimplifier
 
 
@@ -95,12 +95,15 @@ class ExpressionGenerator:
 
     # Function nodes with reduced complexity
     if depth < max_depth - 1:
-      if random.random() < 0.75:  # Favor binary ops
+      node_type = random.choices(['binary', 'unary', 'scale'], weights=[0.7, 0.2, 0.1])[0]
+
+      if node_type == 'binary':
         op = random.choice(self.binary_ops)
         left = self._generate_node(depth + 1, max_depth)
         right = self._generate_node(depth + 1, max_depth)
         return BinaryOpNode(op, left, right)
-      else:
+      
+      elif node_type == 'unary':
         # Use physics-biased unary operations
         if depth < max_depth - 2:
           # Choose unary operator with physics bias
@@ -111,6 +114,12 @@ class ExpressionGenerator:
             op = random.choice(self.unary_ops)
           operand = self._generate_node(depth + 1, max_depth)
           return UnaryOpNode(op, operand)
+          
+      elif node_type == 'scale':
+        if depth < max_depth - 2:
+            power = random.randint(-3, 3)
+            operand = self._generate_node(depth + 1, max_depth)
+            return ScalingOpNode(power, operand)
 
     # Fallback to terminal with enhanced physics constants (ExpressionGenerator)
     if random.random() < 0.65:
@@ -223,13 +232,16 @@ class BiasedExpressionGenerator(ExpressionGenerator):
 
     # Function nodes with biased operator selection
     if depth < max_depth - 1:
-      if random.random() < 0.75:  # Favor binary ops
+      node_type = random.choices(['binary', 'unary', 'scale'], weights=[0.7, 0.25, 0.05])[0]
+
+      if node_type == 'binary':
         # Use weighted operator selection
         op = random.choice(self.weighted_binary_ops)
         left = self._generate_biased_node(depth + 1, max_depth)
         right = self._generate_biased_node(depth + 1, max_depth)
         return BinaryOpNode(op, left, right)
-      else:
+      
+      elif node_type == 'unary':
         # Unary operations with physics bias
         if depth < max_depth - 2:
           # Choose unary operator with physics bias
@@ -240,6 +252,12 @@ class BiasedExpressionGenerator(ExpressionGenerator):
             op = random.choice(self.unary_ops)
           operand = self._generate_biased_node(depth + 1, max_depth)
           return UnaryOpNode(op, operand)
+
+      elif node_type == 'scale':
+        if depth < max_depth - 2:
+            power = random.randint(-3, 3)
+            operand = self._generate_biased_node(depth + 1, max_depth)
+            return ScalingOpNode(power, operand)
 
     # Fallback to terminal with enhanced physics constants (BiasedExpressionGenerator)
     if random.random() < 0.65:

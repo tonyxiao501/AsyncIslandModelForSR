@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Optional
-from ..core.node import Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
+from ..core.node import Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 from ..optimization.memory_pool import get_global_pool
 
 
@@ -41,6 +41,10 @@ class ExpressionSimplifier:
         if nested_depth > 2:
           return True
 
+    elif isinstance(node, ScalingOpNode):
+        if isinstance(node.operand, ScalingOpNode):
+            return True # scale(scale(x)) is redundant
+
     elif isinstance(node, BinaryOpNode):
       if (ExpressionSimplifier._is_invalid_combination(node.left) or
           ExpressionSimplifier._is_invalid_combination(node.right)):
@@ -50,7 +54,7 @@ class ExpressionSimplifier:
 
   @staticmethod
   def _count_nested_depth(node: Node) -> int:
-    if isinstance(node, UnaryOpNode):
+    if isinstance(node, UnaryOpNode) or isinstance(node, ScalingOpNode):
       return 1 + ExpressionSimplifier._count_nested_depth(node.operand)
     elif isinstance(node, BinaryOpNode):
       return max(ExpressionSimplifier._count_nested_depth(node.left),
@@ -105,5 +109,17 @@ class ExpressionSimplifier:
           pass
 
       return get_global_pool().get_unary_node(node.operator, operand)
+
+    elif isinstance(node, ScalingOpNode):
+        operand = ExpressionSimplifier._apply_simplification_rules(node.operand) or node.operand
+
+        if node.power == 0:
+            return operand # scale(x, 0) = x
+
+        if isinstance(operand, ScalingOpNode):
+            new_power = node.power + operand.power
+            return get_global_pool().get_scaling_node(new_power, operand.operand)
+
+        return get_global_pool().get_scaling_node(node.power, operand)
 
     return None

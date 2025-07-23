@@ -9,7 +9,8 @@ from .core.node import (
     VariableNode,
     ConstantNode,
     BinaryOpNode,
-    UnaryOpNode
+    UnaryOpNode,
+    ScalingOpNode
 )
 from .core.operators import (
     NodeType,
@@ -28,7 +29,7 @@ from .utils import SymPySimplifier, ExpressionValidator
 
 __all__ = [
     "Expression",
-    "Node", "VariableNode", "ConstantNode", "BinaryOpNode", "UnaryOpNode",
+    "Node", "VariableNode", "ConstantNode", "BinaryOpNode", "UnaryOpNode", "ScalingOpNode",
     "NodeType", "OpType",
     "BINARY_OP_MAP", "UNARY_OP_MAP",
     "evaluate_variable", "evaluate_constant", "evaluate_binary_op", "evaluate_unary_op",

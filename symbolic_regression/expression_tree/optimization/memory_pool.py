@@ -2,7 +2,7 @@ from typing import List, TYPE_CHECKING, Optional
 import threading
 
 if TYPE_CHECKING:
-  from ..core.node import Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
+  from ..core.node import Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 
 
 class NodePool:
@@ -13,18 +13,20 @@ class NodePool:
     self.constant_pool: List['ConstantNode'] = []
     self.binary_pool: List['BinaryOpNode'] = []
     self.unary_pool: List['UnaryOpNode'] = []
+    self.scaling_pool: List['ScalingOpNode'] = []
     self._preallocate(initial_size)
 
   def _preallocate(self, size: int):
     # Import here to avoid circular imports
-    from ..core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
+    from ..core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 
-    quarter = size // 4
-    for _ in range(quarter):
+    fifth = size // 5
+    for _ in range(fifth):
       self.variable_pool.append(VariableNode.__new__(VariableNode))
       self.constant_pool.append(ConstantNode.__new__(ConstantNode))
       self.binary_pool.append(BinaryOpNode.__new__(BinaryOpNode))
       self.unary_pool.append(UnaryOpNode.__new__(UnaryOpNode))
+      self.scaling_pool.append(ScalingOpNode.__new__(ScalingOpNode))
 
   def get_variable_node(self, index: int) -> 'VariableNode':
     from ..core.node import VariableNode
@@ -58,9 +60,17 @@ class NodePool:
       return node
     return UnaryOpNode(operator, operand)
 
+  def get_scaling_node(self, power: int, operand: 'Node') -> 'ScalingOpNode':
+    from ..core.node import ScalingOpNode
+    if self.scaling_pool:
+        node = self.scaling_pool.pop()
+        node.__init__(power, operand)
+        return node
+    return ScalingOpNode(power, operand)
+
   def return_node(self, node: 'Node'):
     """Return node to pool for reuse"""
-    from ..core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
+    from ..core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 
     if hasattr(node, '_clear_cache'):
       node._clear_cache()
@@ -73,6 +83,8 @@ class NodePool:
       self.binary_pool.append(node)
     elif isinstance(node, UnaryOpNode) and len(self.unary_pool) < 500:
       self.unary_pool.append(node)
+    elif isinstance(node, ScalingOpNode) and len(self.scaling_pool) < 500:
+      self.scaling_pool.append(node)
 
   def get_stats(self) -> dict:
     """Get pool statistics"""
@@ -80,7 +92,8 @@ class NodePool:
       'variable_pool_size': len(self.variable_pool),
       'constant_pool_size': len(self.constant_pool),
       'binary_pool_size': len(self.binary_pool),
-      'unary_pool_size': len(self.unary_pool)
+      'unary_pool_size': len(self.unary_pool),
+      'scaling_pool_size': len(self.scaling_pool)
     }
 
   def clear(self):
@@ -89,6 +102,7 @@ class NodePool:
     self.constant_pool.clear()
     self.binary_pool.clear()
     self.unary_pool.clear()
+    self.scaling_pool.clear()
 
 
 # Global instance - process-local initialization with optimized locking

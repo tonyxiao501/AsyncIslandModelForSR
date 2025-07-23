@@ -28,6 +28,9 @@ COMPLEXITY_WEIGHTS: Dict[str, float] = {
   'abs': 1.1,  # Simple operation
   'neg': 1.0,  # Unary minus
   
+  # Unary operation, but takes new members 
+  'scale': 2.0, # TODO: THIS WEIGHT.
+  
   # Power-related operations
   'square': 1.1,
   'cube': 1.2,
@@ -75,6 +78,9 @@ COMBINATION_PENALTIES: Dict[tuple, float] = {
   ('/', '/'): 2.0,  # Nested divisions can amplify errors
   ('/', '^'): 2.5,  # Division with powers
   ('^', '/'): 2.5,
+  
+  # Scaling chians:
+  ('scale', 'scale'): 3.0 # They would cancel out.
 }
 
 
@@ -406,6 +412,67 @@ class UnaryOpNode(Node):
       return sp.tanh(operand_sympy)
     else:
       raise RuntimeWarning(f"to_sympy reached unexpected unary operation: {self.operator}")
+
+  def get_constants(self, constant_list):
+    self.operand.get_constants(constant_list)
+
+  def set_constants(self, constant_list):
+    self.operand.set_constants(constant_list)
+
+class ScalingOpNode(Node):
+  __slots__ = ('power', 'operand')
+  
+  def __init__(self, power: int, operand: Node):
+    super().__init__()
+    self.power = power
+    self.operand = operand
+    
+  def evaluate(self, X: np.ndarray):
+    operand_val = self.operand.evaluate(X)
+    try:
+      result = operand_val * pow(10, self.power)
+      result = np.nan_to_num(result, nan=0.0, posinf=1e6, neginf=-1e6)
+      return result.astype(np.float64)
+    except Exception:
+      return np.zeros(X.shape[0], dtype=np.float64)
+
+  def to_string(self) -> str:
+    return f"({self.operand.to_string()} * 1e{self.power})"
+
+  def copy(self) -> 'ScalingOpNode':
+    # Assuming get_scaling_node will be added to the memory pool
+    return get_global_pool().get_scaling_node(self.power, self.operand.copy())
+
+  def _compute_size(self) -> int:
+    return 1 + self.operand.size()
+
+  def _compute_complexity(self) -> float:
+    base_complexity = COMPLEXITY_WEIGHTS.get('scale', 2.0)
+    operand_complexity = self.operand.complexity()
+
+    penalty = 1.0
+    if isinstance(self.operand, ScalingOpNode):
+        penalty *= COMBINATION_PENALTIES.get(('scale', 'scale'), 3.0)
+
+    return base_complexity * (1 + operand_complexity) * penalty
+
+  def _compute_hash(self) -> int:
+    # Assuming NodeType.SCALING_OP will be added
+    return hash((NodeType.UNARY_OP, 'scale', self.power, hash(self.operand)))
+
+  def compress_constants(self):
+    operand_c = self.operand.compress_constants()
+    if operand_c is None:
+        operand_c = self.operand
+    if isinstance(operand_c, ConstantNode):
+        val = operand_c.value * pow(10, self.power)
+        return get_global_pool().get_constant_node(val)
+    # Assuming get_scaling_node will be added
+    return get_global_pool().get_scaling_node(self.power, operand_c)
+
+  def to_sympy(self, c_generator):
+    operand_sympy = self.operand.to_sympy(c_generator)
+    return operand_sympy * (10**self.power)
 
   def get_constants(self, constant_list):
     self.operand.get_constants(constant_list)
