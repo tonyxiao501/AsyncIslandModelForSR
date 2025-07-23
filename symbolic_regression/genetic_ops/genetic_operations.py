@@ -30,13 +30,13 @@ from .diversity_metrics import DiversityMetrics
 class GeneticOperations:
     """Enhanced genetic operations with Grammatical Evolution-inspired improvements"""
 
-    def __init__(self, n_inputs: int, max_complexity: int = 20):
+    def __init__(self, n_inputs: int, max_complexity: int = 20, scaling_range: int = 3):
         self.n_inputs = n_inputs
         self.max_complexity = max_complexity
         self.generator = ExpressionGenerator(n_inputs)
         
         # Initialize component modules
-        self.mutation_strategies = MutationStrategies(n_inputs, max_complexity)
+        self.mutation_strategies = MutationStrategies(n_inputs, max_complexity, scaling_range)
         self.crossover_ops = CrossoverOperations(max_complexity)
         self.context_analyzer = ExpressionContextAnalyzer(n_inputs)
         self.diversity_metrics = DiversityMetrics(n_inputs)

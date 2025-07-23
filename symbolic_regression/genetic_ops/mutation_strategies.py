@@ -18,11 +18,12 @@ from .context_analysis import ExpressionContextAnalyzer
 class MutationStrategies:
     """Collection of advanced mutation strategies for genetic programming"""
     
-    def __init__(self, n_inputs: int, max_complexity: int = 20):
+    def __init__(self, n_inputs: int, max_complexity: int = 20, scaling_range: int = 3):
         self.n_inputs = n_inputs
         self.max_complexity = max_complexity
         self.generator = ExpressionGenerator(n_inputs)
         self.context_analyzer = ExpressionContextAnalyzer(n_inputs)
+        self.scaling_range = scaling_range
     
     def context_aware_mutation(self, expression: Expression, rate: float, 
                               X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
@@ -69,8 +70,16 @@ class MutationStrategies:
                     elif isinstance(node, UnaryOpNode):
                         changed = self._mutate_unary_operator(node) or changed
                     elif isinstance(node, ScalingOpNode):
-                        # TODO: BETTER MUTSTION
-                        node.power += random.choice([-1, 1])
+                        # Weights inversely proportional to the step magnitude for a more controlled mutation
+                        steps = list(range(-self.scaling_range, 0)) + list(range(1, self.scaling_range + 1))
+                        if not steps:
+                            continue # scaling_range might be 0, no mutation possible
+
+                        weights = [1.0 / (s**2 + 1) for s in steps]
+                        probabilities = np.array(weights) / np.sum(weights)
+                        
+                        step = np.random.choice(steps, p=probabilities)
+                        node.power += step
                         changed = True
         
         if changed:

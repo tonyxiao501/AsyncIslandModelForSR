@@ -2,15 +2,17 @@ import random
 from typing import List, Optional
 from .expression_tree import Expression, Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 from .expression_tree.utils.simplifier import ExpressionSimplifier
+import numpy as np
 
 
 class ExpressionGenerator:
   """Enhanced expression generator with complexity control"""
 
-  def __init__(self, n_inputs: int, max_depth: int = 6):
+  def __init__(self, n_inputs: int, max_depth: int = 6, scaling_range: int = 3):
     self.n_inputs = n_inputs
     self.max_depth = max_depth
     self.binary_ops = ['+', '-', '*', '/', '^']  # Re-added power operations for physics
+    self.scaling_range = scaling_range
     # Enhanced unary operations for physics laws
     self.unary_ops = [
         'sin', 'cos', 'tan',           # Trigonometric functions
@@ -85,13 +87,7 @@ class ExpressionGenerator:
           return ConstantNode(random.choice(physics_constants))
         else:
           # Random constants with physics-appropriate range
-          if random.random() < 0.8:
-            return ConstantNode(random.uniform(-5, 5))  # Most common range
-          else:
-            # Occasionally generate larger constants for scaling
-            sign = random.choice([-1, 1])
-            magnitude = random.choice([10, 100, 1000, 0.1, 0.01, 0.001])
-            return ConstantNode(sign * magnitude)
+          return ConstantNode(random.uniform(-5, 5))  # Most common range
 
     # Function nodes with reduced complexity
     if depth < max_depth - 1:
@@ -117,7 +113,7 @@ class ExpressionGenerator:
           
       elif node_type == 'scale':
         if depth < max_depth - 2:
-            power = random.randint(-3, 3)
+            power = random.randint(-self.scaling_range, self.scaling_range)
             operand = self._generate_node(depth + 1, max_depth)
             return ScalingOpNode(power, operand)
 
@@ -136,13 +132,7 @@ class ExpressionGenerator:
         return ConstantNode(random.choice(physics_constants))
       else:
         # Random constants with physics-appropriate range
-        if random.random() < 0.8:
-          return ConstantNode(random.uniform(-5, 5))  # Most common range
-        else:
-          # Occasionally generate larger constants for scaling
-          sign = random.choice([-1, 1])
-          magnitude = random.choice([10, 100, 1000, 0.1, 0.01, 0.001])
-          return ConstantNode(sign * magnitude)
+        return ConstantNode(random.uniform(-5, 5))  # Most common range
 
   def generate_population(self, population_size: int) -> List[Expression]:
     """Generate a validated population"""
@@ -273,11 +263,4 @@ class BiasedExpressionGenerator(ExpressionGenerator):
         ]
         return ConstantNode(random.choice(physics_constants))
       else:
-        # Random constants with physics-appropriate range
-        if random.random() < 0.8:
-          return ConstantNode(random.uniform(-5, 5))  # Most common range
-        else:
-          # Occasionally generate larger constants for scaling
-          sign = random.choice([-1, 1])
-          magnitude = random.choice([10, 100, 1000, 0.1, 0.01, 0.001])
-          return ConstantNode(sign * magnitude)
+        return ConstantNode(random.uniform(-5, 5))  # Most common range

@@ -430,7 +430,7 @@ class ScalingOpNode(Node):
   def evaluate(self, X: np.ndarray):
     operand_val = self.operand.evaluate(X)
     try:
-      result = operand_val * pow(10, self.power)
+      result = operand_val * pow(10., self.power)
       result = np.nan_to_num(result, nan=0.0, posinf=1e6, neginf=-1e6)
       return result.astype(np.float64)
     except Exception:
@@ -465,7 +465,7 @@ class ScalingOpNode(Node):
     if operand_c is None:
         operand_c = self.operand
     if isinstance(operand_c, ConstantNode):
-        val = operand_c.value * pow(10, self.power)
+        val = operand_c.value * pow(10., self.power)
         return get_global_pool().get_constant_node(val)
     # Assuming get_scaling_node will be added
     return get_global_pool().get_scaling_node(self.power, operand_c)

@@ -404,14 +404,16 @@ class MIMOSymbolicRegressor:
     self.current_mutation_rate = self.mutation_rate
     self.current_crossover_rate = self.crossover_rate
     self.late_extension_triggered = False  # Reset late extension flag
-
+    
+    scaling_range = max(int(np.log(np.mean(np.abs(X)))), int(np.log(np.mean(np.abs(y)))))
+    
     # Generate diverse initial population
     if self.n_inputs is None:
       raise ValueError("n_inputs must be set before generating population")
-    generator = ExpressionGenerator(self.n_inputs, self.max_depth)
+    generator = ExpressionGenerator(self.n_inputs, self.max_depth, scaling_range) # Added X, for scaling.
     population = generate_diverse_population_optimized(generator, self.n_inputs, self.population_size, self.max_depth, self.pop_manager)
 
-    genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25)
+    genetic_ops = GeneticOperations(self.n_inputs, max_complexity=25, scaling_range=scaling_range)
     best_fitness = -10.0  # Start with large negative R² score
     plateau_counter = 0
     original_generations = self.generations  # Store original generation count for extension
