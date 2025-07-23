@@ -97,9 +97,19 @@ class Expression:
   @classmethod
   def from_string(cls, expr_str: str, n_inputs: int = 1) -> 'Expression':
     try:
+      # First check if this is a scaling operation format
+      if expr_str.startswith('scale(') and expr_str.endswith(')'):
+        return cls._parse_scaling_node(expr_str, n_inputs)
+      
+      # Check for nested scaling operations that SymPy can't handle
+      if 'scale(' in expr_str:
+        # If the expression contains scaling operations but isn't just a scaling operation,
+        # we need to handle it specially since SymPy doesn't understand scale()
+        return cls._parse_expression_with_scaling(expr_str, n_inputs)
+      
       # Parse using sympy first to validate and normalize the expression
       import sympy as sp
-      from .core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
+      from .core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
       from .core.operators import BINARY_OP_MAP, UNARY_OP_MAP
 
       # Replace variable notation for sympy compatibility
@@ -126,11 +136,103 @@ class Expression:
       fallback_node = VariableNode(0)
       return cls(fallback_node)
 
+  @classmethod
+  def _parse_scaling_node(cls, expr_str: str, n_inputs: int) -> 'Expression':
+    """Parse scaling node format: scale(operand, power)"""
+    from .core.node import ScalingOpNode, VariableNode
+    
+    # Remove 'scale(' and final ')'
+    content = expr_str[6:-1]
+    
+    # Find the last comma to separate operand from power
+    # Need to be careful about nested parentheses
+    paren_depth = 0
+    last_comma_idx = -1
+    
+    for i, char in enumerate(content):
+      if char == '(':
+        paren_depth += 1
+      elif char == ')':
+        paren_depth -= 1
+      elif char == ',' and paren_depth == 0:
+        last_comma_idx = i
+    
+    if last_comma_idx == -1:
+      raise ValueError(f"Invalid scaling format: {expr_str}")
+    
+    operand_str = content[:last_comma_idx].strip()
+    power_str = content[last_comma_idx + 1:].strip()
+    
+    try:
+      power = int(power_str)
+    except ValueError:
+      raise ValueError(f"Invalid power in scaling operation: {power_str}")
+    
+    # Protection against infinite recursion - if operand is also a scaling node,
+    # and it's identical to the current expression, fall back to a simple node
+    if operand_str.startswith('scale(') and operand_str == expr_str:
+      # This would cause infinite recursion, so return a fallback
+      return cls(VariableNode(0))
+    
+    # Recursively parse the operand with additional safety checks
+    try:
+      operand_expr = cls.from_string(operand_str, n_inputs)
+      scaling_node = ScalingOpNode(power, operand_expr.root)
+      return cls(scaling_node)
+    except RecursionError:
+      # If we hit recursion limit, return a fallback
+      return cls(VariableNode(0))
+    except Exception:
+      # If parsing fails for any other reason, return a fallback
+      return cls(VariableNode(0))
+
+  @classmethod
+  def _parse_expression_with_scaling(cls, expr_str: str, n_inputs: int) -> 'Expression':
+    """Parse expressions that contain scaling operations mixed with other operations"""
+    from .core.node import VariableNode
+    
+    # For now, this is a simplified approach that falls back to a variable node
+    # In a full implementation, you would need to properly parse mixed expressions
+    # containing scale() functions, but this prevents infinite loops
+    try:
+      # Try to replace scale() functions with simpler equivalents for SymPy
+      simplified_str = expr_str
+      
+      # Find and replace scale() operations
+      import re
+      scale_pattern = r'scale\(([^,]+),\s*(-?\d+)\)'
+      
+      def replace_scale(match):
+        operand = match.group(1).strip()
+        power = int(match.group(2))
+        # Convert scale(operand, power) to operand * 10^power
+        if power >= 0:
+          return f"({operand} * {10**power})"
+        else:
+          return f"({operand} / {10**abs(power)})"
+      
+      simplified_str = re.sub(scale_pattern, replace_scale, simplified_str)
+      
+      # Now try to parse with SymPy
+      import sympy as sp
+      normalized_str = simplified_str
+      for i in range(n_inputs):
+        normalized_str = normalized_str.replace(f'X{i}', f'x{i}')
+      
+      sympy_expr = sp.sympify(normalized_str)
+      root_node = cls._sympy_to_node(sympy_expr, n_inputs)
+      return cls(root_node)
+      
+    except Exception:
+      # If all else fails, return a simple variable node
+      fallback_node = VariableNode(0)
+      return cls(fallback_node)
+
   @staticmethod
   def _sympy_to_node(sympy_expr, n_inputs: int):
     """Convert a sympy expression to our internal node structure"""
     import sympy as sp
-    from .core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode
+    from .core.node import VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
     from .core.operators import BINARY_OP_MAP, UNARY_OP_MAP
 
     # Handle atomic expressions

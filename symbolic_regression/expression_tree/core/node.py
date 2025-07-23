@@ -437,7 +437,8 @@ class ScalingOpNode(Node):
       return np.zeros(X.shape[0], dtype=np.float64)
 
   def to_string(self) -> str:
-    return f"({self.operand.to_string()} * 1e{self.power})"
+    # Use a unique format that can be parsed back: scale(operand, power)
+    return f"scale({self.operand.to_string()}, {self.power})"
 
   def copy(self) -> 'ScalingOpNode':
     # Assuming get_scaling_node will be added to the memory pool
@@ -457,8 +458,8 @@ class ScalingOpNode(Node):
     return base_complexity * (1 + operand_complexity) * penalty
 
   def _compute_hash(self) -> int:
-    # Assuming NodeType.SCALING_OP will be added
-    return hash((NodeType.UNARY_OP, 'scale', self.power, hash(self.operand)))
+    # Use proper NodeType for scaling operations
+    return hash((NodeType.SCALING_OP, 'scale', self.power, hash(self.operand)))
 
   def compress_constants(self):
     operand_c = self.operand.compress_constants()

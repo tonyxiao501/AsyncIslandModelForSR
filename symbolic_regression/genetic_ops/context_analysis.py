@@ -9,7 +9,7 @@ import numpy as np
 from typing import Dict, List
 from collections import Counter
 
-from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
+from ..expression_tree import Expression, Node, ConstantNode, VariableNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 
 
 class ExpressionContextAnalyzer:
@@ -151,6 +151,11 @@ class ExpressionContextAnalyzer:
                     subtrees.append(subtree_str)
                     collect_subtrees(node.left)
                     collect_subtrees(node.right)
+                elif isinstance(node, ScalingOpNode):
+                    operand_str = node.operand.to_string() if hasattr(node.operand, 'to_string') else str(node.operand)
+                    subtree_str = f"scale({operand_str}, {node.power})"
+                    subtrees.append(subtree_str)
+                    collect_subtrees(node.operand)
             
             collect_subtrees(root)
             
@@ -185,6 +190,8 @@ class ExpressionContextAnalyzer:
             return 1 + self._calculate_depth(node.operand)
         elif isinstance(node, BinaryOpNode):
             return 1 + max(self._calculate_depth(node.left), self._calculate_depth(node.right))
+        elif isinstance(node, ScalingOpNode):
+            return 1 + self._calculate_depth(node.operand)
         return 1
     
     def _get_all_nodes(self, node: Node) -> List[Node]:
@@ -194,6 +201,8 @@ class ExpressionContextAnalyzer:
             nodes.extend(self._get_all_nodes(node.left))
             nodes.extend(self._get_all_nodes(node.right))
         elif isinstance(node, UnaryOpNode):
+            nodes.extend(self._get_all_nodes(node.operand))
+        elif isinstance(node, ScalingOpNode):
             nodes.extend(self._get_all_nodes(node.operand))
         return nodes
     

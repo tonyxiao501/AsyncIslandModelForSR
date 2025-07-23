@@ -7,7 +7,7 @@ A genetic programming approach to symbolic regression for MIMO systems.
 
 from .expression_tree import (
   Expression, Node, VariableNode, ConstantNode,
-  BinaryOpNode, UnaryOpNode
+  BinaryOpNode, UnaryOpNode, ScalingOpNode
 )
 from .generator import ExpressionGenerator, BiasedExpressionGenerator
 from .genetic_ops import GeneticOperations
@@ -33,7 +33,7 @@ from .evolution_stats import get_evolution_stats, get_detailed_expressions
 __version__ = "0.1.0"
 __all__ = [
   "Expression", "Node", "VariableNode", "ConstantNode",
-  "BinaryOpNode", "UnaryOpNode",
+  "BinaryOpNode", "UnaryOpNode", "ScalingOpNode",
   "ExpressionGenerator", "BiasedExpressionGenerator",
   "GeneticOperations", "MIMOSymbolicRegressor", "EnsembleMIMORegressor",
   "PopulationManager", "generate_diverse_population_optimized", "inject_diversity_optimized",

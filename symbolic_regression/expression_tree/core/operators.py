@@ -7,6 +7,7 @@ class NodeType(IntEnum):
   CONSTANT = 1
   BINARY_OP = 2
   UNARY_OP = 3
+  SCALING_OP = 4
 
 class OpType(IntEnum):
   # Binary ops
@@ -35,6 +36,7 @@ class OpType(IntEnum):
   SINH = 21
   COSH = 22
   TANH = 23
+  SCALE = 24  # Scaling operation
 
 # Mapping dictionaries
 BINARY_OP_MAP = {'+': OpType.ADD, '-': OpType.SUB, '*': OpType.MUL, '/': OpType.DIV, '^': OpType.POW}
@@ -48,6 +50,9 @@ UNARY_OP_MAP = {
     'fourth_root': OpType.FOURTH_ROOT, 'sinh': OpType.SINH,
     'cosh': OpType.COSH, 'tanh': OpType.TANH
 }
+
+# Scaling operation mapping
+SCALING_OP_MAP = {'scale': OpType.SCALE}
 
 @numba.njit(cache=True, inline='always')
 def evaluate_variable(X, index):
