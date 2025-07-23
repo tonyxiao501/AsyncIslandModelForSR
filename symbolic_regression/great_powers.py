@@ -1,27 +1,179 @@
 """
 Great Powers Mechanism - Elite Expression Repository
-Maintains the best 5 expressions across all generations
+Maintains the best 5 expressions across all generations with redundancy elimination
 """
 import numpy as np
 from typing import List, Dict, Optional, Tuple
 from .expression_tree import Expression
+from .utils import string_similarity, calculate_expression_uniqueness
 
 
 class GreatPowers:
     """
     Maintains the top 5 expressions (Great Powers) dynamically across generations.
     These expressions are preserved from diversity injection and population restarts.
+    Includes advanced redundancy elimination to prevent duplicate expressions.
     """
     
-    def __init__(self, max_powers: int = 5):
+    def __init__(self, max_powers: int = 5, similarity_threshold: float = 0.85):
         self.max_powers = max_powers
         self.powers: List[Dict] = []  # List of {'expression': Expression, 'fitness': float, 'generation': int}
         self.generation_updates = 0
+        self.similarity_threshold = similarity_threshold  # Threshold for considering expressions similar
+        self.redundancy_stats = {
+            'rejected_duplicates': 0,
+            'semantic_rejections': 0,
+            'structural_rejections': 0
+        }
         
-    def update_powers(self, population: List[Expression], fitness_scores: List[float], generation: int) -> bool:
+    def _is_expression_redundant(self, candidate_expr: Expression, X: Optional[np.ndarray] = None) -> Tuple[bool, str]:
+        """
+        Check if candidate expression is redundant with existing Great Powers.
+        
+        Args:
+            candidate_expr: Expression to check for redundancy
+            X: Optional data for semantic comparison
+            
+        Returns:
+            Tuple of (is_redundant: bool, reason: str)
+        """
+        candidate_str = candidate_expr.to_string()
+        
+        for i, power in enumerate(self.powers):
+            existing_expr = power['expression']
+            existing_str = existing_expr.to_string()
+            
+            # 1. Exact string match (fastest check)
+            if candidate_str == existing_str:
+                return True, f"exact_duplicate_with_power_{i+1}"
+            
+            # 2. String similarity check
+            str_similarity = string_similarity(candidate_str, existing_str)
+            if str_similarity >= self.similarity_threshold:
+                return True, f"string_similarity_{str_similarity:.3f}_with_power_{i+1}"
+            
+            # 3. Structural similarity check
+            structural_similarity = self._calculate_structural_similarity(candidate_expr, existing_expr)
+            if structural_similarity >= self.similarity_threshold:
+                return True, f"structural_similarity_{structural_similarity:.3f}_with_power_{i+1}"
+            
+            # 4. Semantic similarity check (if data available)
+            if X is not None:
+                semantic_similarity = self._calculate_semantic_similarity(candidate_expr, existing_expr, X)
+                if semantic_similarity >= self.similarity_threshold + 0.05:  # Slightly higher threshold for semantic
+                    return True, f"semantic_similarity_{semantic_similarity:.3f}_with_power_{i+1}"
+        
+        return False, "not_redundant"
+    
+    def _calculate_structural_similarity(self, expr1: Expression, expr2: Expression) -> float:
+        """Calculate structural similarity between two expressions"""
+        try:
+            # Compare complexity
+            comp1, comp2 = expr1.complexity(), expr2.complexity()
+            if comp1 == 0 and comp2 == 0:
+                return 1.0
+            
+            complexity_similarity = 1.0 - abs(comp1 - comp2) / max(comp1, comp2, 1)
+            
+            # Compare size (number of nodes)
+            size1, size2 = expr1.size(), expr2.size()
+            if size1 == 0 and size2 == 0:
+                return 1.0
+                
+            size_similarity = 1.0 - abs(size1 - size2) / max(size1, size2, 1)
+            
+            # Get operator signatures
+            ops1 = self._get_operator_signature(expr1)
+            ops2 = self._get_operator_signature(expr2)
+            
+            # Calculate Jaccard similarity for operators
+            all_ops = set(ops1.keys()) | set(ops2.keys())
+            if not all_ops:
+                operator_similarity = 1.0
+            else:
+                intersection = sum(min(ops1.get(op, 0), ops2.get(op, 0)) for op in all_ops)
+                union = sum(max(ops1.get(op, 0), ops2.get(op, 0)) for op in all_ops)
+                operator_similarity = intersection / union if union > 0 else 0.0
+            
+            # Weighted combination
+            return (0.3 * complexity_similarity + 0.3 * size_similarity + 0.4 * operator_similarity)
+            
+        except Exception:
+            # Fallback to simple comparison
+            return 1.0 if expr1.to_string() == expr2.to_string() else 0.0
+    
+    def _calculate_semantic_similarity(self, expr1: Expression, expr2: Expression, X: np.ndarray) -> float:
+        """Calculate semantic similarity based on expression outputs"""
+        try:
+            # Use a sample for performance
+            sample_size = min(100, len(X))
+            sample_indices = np.random.choice(len(X), sample_size, replace=False) if len(X) > sample_size else slice(None)
+            X_sample = X[sample_indices]
+            
+            vals1 = expr1.evaluate(X_sample)
+            vals2 = expr2.evaluate(X_sample)
+            
+            if vals1 is None or vals2 is None:
+                return 0.0
+            
+            # Flatten for correlation calculation
+            vals1_flat = vals1.flatten()
+            vals2_flat = vals2.flatten()
+            
+            # Check for constant outputs
+            if np.std(vals1_flat) < 1e-10 and np.std(vals2_flat) < 1e-10:
+                # Both constant, check if same value
+                return 1.0 if np.allclose(vals1_flat, vals2_flat, rtol=1e-5) else 0.0
+            
+            # Calculate correlation
+            correlation = np.corrcoef(vals1_flat, vals2_flat)[0, 1]
+            
+            if np.isnan(correlation):
+                return 0.0
+            
+            # Return absolute correlation as similarity
+            return abs(correlation)
+            
+        except Exception:
+            return 0.0
+    
+    def _get_operator_signature(self, expr: Expression) -> Dict[str, int]:
+        """Get operator frequency signature for an expression"""
+        signature = {}
+        
+        def collect_operators(node):
+            from .expression_tree.core.node import BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
+            
+            if hasattr(node, 'operator'):
+                if hasattr(node, 'left') and hasattr(node, 'right'):  # BinaryOpNode
+                    signature[f"binary_{node.operator}"] = signature.get(f"binary_{node.operator}", 0) + 1
+                    collect_operators(node.left)
+                    collect_operators(node.right)
+                elif hasattr(node, 'operand'):  # UnaryOpNode
+                    signature[f"unary_{node.operator}"] = signature.get(f"unary_{node.operator}", 0) + 1
+                    collect_operators(node.operand)
+            elif hasattr(node, 'value'):  # ConstantNode
+                signature["constant"] = signature.get("constant", 0) + 1
+            elif hasattr(node, 'index'):  # VariableNode
+                signature[f"var_{node.index}"] = signature.get(f"var_{node.index}", 0) + 1
+        
+        try:
+            collect_operators(expr.root)
+        except Exception:
+            pass
+            
+        return signature
+        
+    def update_powers(self, population: List[Expression], fitness_scores: List[float], generation: int, X: Optional[np.ndarray] = None) -> bool:
         """
         Update the Great Powers with the best expression from current generation.
-        Includes complexity bias to favor simpler expressions.
+        Includes redundancy elimination and complexity bias to favor simpler expressions.
+        
+        Args:
+            population: Current generation population
+            fitness_scores: Fitness scores for current generation
+            generation: Current generation number
+            X: Optional training data for semantic redundancy checking
         
         Returns:
             bool: True if a new Great Power was added or updated
@@ -30,6 +182,20 @@ class GreatPowers:
         best_idx = np.argmax(fitness_scores)
         best_fitness = fitness_scores[best_idx]
         best_expr = population[best_idx].copy()
+        
+        # CHECK FOR REDUNDANCY FIRST - reject if redundant
+        is_redundant, redundancy_reason = self._is_expression_redundant(best_expr, X)
+        if is_redundant:
+            # Update redundancy statistics
+            if "exact_duplicate" in redundancy_reason:
+                self.redundancy_stats['rejected_duplicates'] += 1
+            elif "semantic_similarity" in redundancy_reason:
+                self.redundancy_stats['semantic_rejections'] += 1
+            elif "structural_similarity" in redundancy_reason or "string_similarity" in redundancy_reason:
+                self.redundancy_stats['structural_rejections'] += 1
+            
+            # Expression is redundant, don't add it
+            return False
         
         # Apply complexity bias: prefer simpler expressions at similar fitness levels
         complexity = best_expr.complexity()
@@ -40,7 +206,7 @@ class GreatPowers:
         updated = False
         
         if len(self.powers) < self.max_powers:
-            # Still have slots available
+            # Still have slots available - add the new Great Power
             self.powers.append({
                 'expression': best_expr,
                 'fitness': best_fitness,
@@ -72,6 +238,95 @@ class GreatPowers:
             self.generation_updates += 1
             
         return updated
+    
+    def get_redundancy_stats(self) -> Dict:
+        """Get statistics about rejected redundant expressions"""
+        total_rejections = sum(self.redundancy_stats.values())
+        return {
+            **self.redundancy_stats,
+            'total_rejections': total_rejections
+        }
+    
+    def clean_redundant_powers(self, X: Optional[np.ndarray] = None, console_log: bool = False) -> int:
+        """
+        Clean up existing Great Powers to remove any redundant expressions.
+        This is useful if Great Powers were added before redundancy checking was implemented.
+        
+        Args:
+            X: Optional training data for semantic similarity checking
+            console_log: Whether to log cleanup details
+            
+        Returns:
+            Number of redundant powers removed
+        """
+        if len(self.powers) <= 1:
+            return 0
+        
+        original_count = len(self.powers)
+        cleaned_powers = []
+        removed_count = 0
+        
+        # Keep track of expressions we've already added to avoid duplicates
+        for i, power in enumerate(self.powers):
+            expr = power['expression']
+            is_redundant = False
+            
+            # Check if this expression is redundant with any previously added expression
+            for existing_power in cleaned_powers:
+                existing_expr = existing_power['expression']
+                
+                # Use the same redundancy checks as in _is_expression_redundant
+                candidate_str = expr.to_string()
+                existing_str = existing_expr.to_string()
+                
+                # 1. Exact string match
+                if candidate_str == existing_str:
+                    is_redundant = True
+                    if console_log:
+                        print(f"  Removing Great Power {i+1}: exact duplicate")
+                    break
+                
+                # 2. String similarity check
+                str_similarity = string_similarity(candidate_str, existing_str)
+                if str_similarity >= self.similarity_threshold:
+                    is_redundant = True
+                    if console_log:
+                        print(f"  Removing Great Power {i+1}: string similarity {str_similarity:.3f}")
+                    break
+                
+                # 3. Structural similarity check
+                structural_similarity = self._calculate_structural_similarity(expr, existing_expr)
+                if structural_similarity >= self.similarity_threshold:
+                    is_redundant = True
+                    if console_log:
+                        print(f"  Removing Great Power {i+1}: structural similarity {structural_similarity:.3f}")
+                    break
+                
+                # 4. Semantic similarity check (if data available)
+                if X is not None:
+                    semantic_similarity = self._calculate_semantic_similarity(expr, existing_expr, X)
+                    if semantic_similarity >= self.similarity_threshold + 0.05:
+                        is_redundant = True
+                        if console_log:
+                            print(f"  Removing Great Power {i+1}: semantic similarity {semantic_similarity:.3f}")
+                        break
+            
+            if not is_redundant:
+                cleaned_powers.append(power)
+            else:
+                removed_count += 1
+        
+        # Update the powers list
+        self.powers = cleaned_powers
+        
+        # Re-sort by adjusted fitness
+        if self.powers:
+            self.powers.sort(key=lambda p: p.get('adjusted_fitness', p['fitness']), reverse=True)
+        
+        if console_log and removed_count > 0:
+            print(f"Great Powers cleanup: removed {removed_count} redundant expressions, {len(self.powers)} remaining")
+        
+        return removed_count
     
     def get_best_expression(self) -> Optional[Expression]:
         """Get the best Great Power expression"""

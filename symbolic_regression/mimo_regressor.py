@@ -336,8 +336,8 @@ class MIMOSymbolicRegressor:
       generation_avg_fitness = np.mean(fitness_scores)
       self.fitness_history.append(generation_best_fitness)
 
-      # Update Great Powers mechanism
-      great_powers_updated = self.great_powers.update_powers(population, fitness_scores, generation)
+      # Update Great Powers mechanism (with redundancy elimination)
+      great_powers_updated = self.great_powers.update_powers(population, fitness_scores, generation, X_scaled)
       
       # Update best solution (now compare against Great Powers)
       great_powers_best_fitness = self.great_powers.get_best_fitness()
@@ -391,6 +391,11 @@ class MIMOSymbolicRegressor:
           great_powers_info = f"GP={len(self.great_powers)}"
           if great_powers_updated:
             great_powers_info += "*"
+          else:
+            # Check if update was rejected due to redundancy
+            redundancy_stats = self.great_powers.get_redundancy_stats()
+            if redundancy_stats['total_rejections'] > 0:
+              great_powers_info += f"[R:{redundancy_stats['total_rejections']}]"
           
           # Diagnose potential fitness drop issues
           diagnosis = self.great_powers.diagnose_fitness_drop(generation_best_fitness, generation)
@@ -435,6 +440,16 @@ class MIMOSymbolicRegressor:
             if self.console_log:
               print(f"  >>> Emergency injection improved fitness to {emergency_best:.6f}")
       
+      # Periodic redundancy cleanup for Great Powers (every 50 generations)
+      if generation > 0 and generation % 50 == 0 and len(self.great_powers) > 1:
+        removed_count = self.great_powers.clean_redundant_powers(X_scaled, self.console_log)
+        if removed_count > 0 and self.console_log:
+          redundancy_stats = self.great_powers.get_redundancy_stats()
+          print(f"  >>> Great Powers redundancy cleanup: removed {removed_count} duplicates")
+          print(f"  >>> Total redundancy rejections: {redundancy_stats['total_rejections']} "
+                f"(exact: {redundancy_stats['rejected_duplicates']}, "
+                f"semantic: {redundancy_stats['semantic_rejections']}, "
+                f"structural: {redundancy_stats['structural_rejections']})")
 
       # Adaptive parameter adjustment
       if self.adaptive_rates:
