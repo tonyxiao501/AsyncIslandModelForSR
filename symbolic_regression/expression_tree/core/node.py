@@ -430,8 +430,14 @@ class ScalingOpNode(Node):
   def evaluate(self, X: np.ndarray):
     operand_val = self.operand.evaluate(X)
     try:
-      result = operand_val * pow(10., self.power)
-      result = np.nan_to_num(result, nan=0.0, posinf=1e6, neginf=-1e6)
+      # Limit power to reasonable range to avoid extreme values
+      safe_power = np.clip(self.power, -10, 10)
+      scale_factor = pow(10., safe_power)
+      result = operand_val * scale_factor
+      
+      # More aggressive clipping for stability
+      result = np.nan_to_num(result, nan=0.0, posinf=1e10, neginf=-1e10)
+      result = np.clip(result, -1e10, 1e10)
       return result.astype(np.float64)
     except Exception:
       return np.zeros(X.shape[0], dtype=np.float64)

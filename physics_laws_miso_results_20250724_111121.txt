@@ -1,0 +1,223 @@
+SYMBOLIC REGRESSION RESULTS FOR PHYSICS LAWS (MISO)
+============================================================
+
+1. Newton's Second Law
+Target function: F = ma
+R^2 Score: 0.999992
+Discovered expressions:
+  Candidate 1: ((X0 * X1) + -0.132)
+  Candidate 2: ((X0 * X1) + -0.132)
+  Candidate 3: ((X0 * X1) + -0.132)
+
+--------------------------------------------------
+
+2. Kinematic Equation
+Target function: s = ut + (1/2)at^2
+R^2 Score: 0.999974
+Discovered expressions:
+  Candidate 1: (X1 * (X0 + ((0.500 * X1) * X2)))
+  Candidate 2: (((X1 * (X2 * 0.500)) + X0) * X1)
+  Candidate 3: (X1 * (((0.510 * (X1 * X2)) + X0) + (0.870 - 1.130)))
+
+--------------------------------------------------
+
+3. Newton's Law of Gravitation (normalized)
+Target function: F ∝ m1m2/r^2
+R^2 Score: 0.999994
+Discovered expressions:
+  Candidate 1: (((X1 / X2) * (X0 / X2)) - 12.248)
+  Candidate 2: ((((X1 / X2) * (X0 / X2)) + 5.568) + X2)
+  Candidate 3: ((1.854 - tan(X2)) + ((X0 / X2) * (X1 / X2)))
+
+--------------------------------------------------
+
+4. Hooke's Law
+Target function: F = -kx
+R^2 Score: 1.000000
+Discovered expressions:
+  Candidate 1: neg((X0 * X1))
+  Candidate 2: neg((X0 * X1))
+  Candidate 3: neg((X0 * X1))
+
+--------------------------------------------------
+
+5. Centripetal Force
+Target function: F = mv^2/r
+R^2 Score: 0.999991
+Discovered expressions:
+  Candidate 1: (((X1 * X0) * (X1 / X2)) + ((44.235 - X1) - X0))
+  Candidate 2: (((X1 * X1) * (X0 / X2)) - (tan(X2) + tan(X2)))
+  Candidate 3: (((X0 / X2) * (1.817 + (X1 * X1))) - (X2 * (X0 / X1)))
+
+--------------------------------------------------
+
+6. Kinetic Energy
+Target function: KE = (1/2)mv^2
+R^2 Score: 0.999975
+Discovered expressions:
+  Candidate 1: ((square(X1) * (0.500 * X0)) - 15.716)
+  Candidate 2: ((X1 + ((0.500 * X1) * (X0 * X1))) - 18.514)
+  Candidate 3: ((X1 + ((0.500 * X1) * (X0 * X1))) - 18.514)
+
+--------------------------------------------------
+
+7. Gravitational Potential Energy
+Target function: PE = mgh
+R^2 Score: 0.999898
+Discovered expressions:
+  Candidate 1: ((6.849 * X0) + (((X0 * X2) - 6.848) * X1))
+  Candidate 2: ((((X0 * X2) - 6.974) * X1) + (6.974 * X0))
+  Candidate 3: ((X0 + sinh((X0 - X1))) + ((X0 * X1) * X2))
+
+--------------------------------------------------
+
+8. Simple Pendulum Period
+Target function: T = 2π√(L/g)
+R^2 Score: 0.999814
+Discovered expressions:
+  Candidate 1: (sqrt_abs(X0) + sqrt_abs(X0))
+  Candidate 2: (sqrt_abs(X0) + sqrt_abs(X0))
+  Candidate 3: (sqrt_abs(X0) + sqrt_abs(X0))
+
+--------------------------------------------------
+
+9. Elastic Potential Energy
+Target function: PE = (1/2)kx^2
+R^2 Score: 1.000000
+Discovered expressions:
+  Candidate 1: ((0.500 * X0) * (X1 * X1))
+  Candidate 2: ((0.500 * X0) * (X1 * X1))
+  Candidate 3: (((X1 * X1) * 0.500) * X0)
+
+--------------------------------------------------
+
+10. Work Done
+Target function: W = F*d*cos(θ)
+R^2 Score: 0.999657
+Discovered expressions:
+  Candidate 1: (((X1 * X0) * cos(X2)) - 3.494)
+  Candidate 2: ((X1 * X0) - ((0.456 * X0) * (((X1 * X2) * X2) - -0.190)))
+  Candidate 3: (((((0.217 + (X2 * X1)) * -0.288) * cosh(X2)) + X1) * X0)
+
+--------------------------------------------------
+
+11. Ohm's Law
+Target function: V = IR
+R^2 Score: 0.999992
+Discovered expressions:
+  Candidate 1: ((X0 * X1) - 0.659)
+  Candidate 2: ((X1 * X0) - 0.659)
+  Candidate 3: ((X1 * X0) - 0.659)
+
+--------------------------------------------------
+
+12. Electric Power
+Target function: P = VI
+R^2 Score: 0.999940
+Discovered expressions:
+  Candidate 1: ((X0 * X1) + (-0.031 * X0))
+  Candidate 2: ((X1 * X0) + (-0.031 * X0))
+  Candidate 3: ((X1 * X0) + (-0.031 * X0))
+
+--------------------------------------------------
+
+13. Capacitor Energy
+Target function: U = (1/2)CV^2
+R^2 Score: 0.999979
+Discovered expressions:
+  Candidate 1: (((X0 * X1) * (X1 * 0.501)) - 0.639)
+  Candidate 2: (((X0 * X1) * (X1 * 0.501)) - 0.639)
+  Candidate 3: (((X0 * X1) * (X1 * 0.501)) - 0.639)
+
+--------------------------------------------------
+
+14. Magnetic Force on Current
+Target function: F = BIL sin(θ)
+R^2 Score: 0.999951
+Discovered expressions:
+  Candidate 1: ((X2 * X0) * ((sin(X3) * X1) - 0.033))
+  Candidate 2: ((X2 * X0) * ((sin(X3) * X1) - 0.033))
+  Candidate 3: (((sin(X3) * (X1 * X0)) + -0.014) * X2)
+
+--------------------------------------------------
+
+15. RC Time Constant
+Target function: τ = RC
+R^2 Score: 0.999941
+Discovered expressions:
+  Candidate 1: (-0.022 + (X1 * X0))
+  Candidate 2: ((scale(-0.292, -5) + X1) * X0)
+  Candidate 3: (X0 * (scale(-0.299, -5) + X1))
+
+--------------------------------------------------
+
+16. Ideal Gas Law (simplified)
+Target function: P ∝ nT/V
+R^2 Score: 0.999976
+Discovered expressions:
+  Candidate 1: (X1 * (1.241 + (X0 / X2)))
+  Candidate 2: (X1 * ((X0 / X2) + 1.310))
+  Candidate 3: (((X0 / X2) + 1.310) * X1)
+
+--------------------------------------------------
+
+17. Fourier's Heat Conduction
+Target function: q = -kA(dT/dx)
+R^2 Score: 0.716091
+Discovered expressions:
+  Candidate 1: (((21.282 - X2) - X2) + ((((X1 - X2) * X1) + -0.256) * (X0 + 2.285)))
+  Candidate 2: cube(((-0.351 * (((X2 + 1.079) + X1) * X1)) - X1))
+  Candidate 3: cube((-0.366 * (((0.258 - (X1 / X0)) + (X1 * X2)) + 0.217)))
+
+--------------------------------------------------
+
+18. Heat Capacity
+Target function: Q = mcΔT
+R^2 Score: 0.999976
+Discovered expressions:
+  Candidate 1: ((((X0 * X1) - X2) * X2) + scale(6.715, 3))
+  Candidate 2: ((((X0 * X1) - X2) * X2) + scale(6.838, 3))
+  Candidate 3: ((((X0 * X1) - X2) * X2) + scale(6.838, 3))
+
+--------------------------------------------------
+
+19. Energy-Frequency Relation
+Target function: E ∝ f
+R^2 Score: 1.000000
+Discovered expressions:
+  Candidate 1: X0
+  Candidate 2: X0
+  Candidate 3: X0
+
+--------------------------------------------------
+
+20. Hydrogen-like Energy Levels
+Target function: E = -13.6Z^2/n^2
+R^2 Score: 0.999995
+Discovered expressions:
+  Candidate 1: ((X0 * (-4.151 / X1)) * (X0 * (3.281 / X1)))
+  Candidate 2: (-0.223 - (((X0 + X0) * (X0 / X1)) * (6.772 / X1)))
+  Candidate 3: (((neg(X0) / 0.079) - X0) * (X0 / (X1 * X1)))
+
+--------------------------------------------------
+
+21. Escape Velocity (simplified)
+Target function: v ∝ √(M/r)
+R^2 Score: 1.000000
+Discovered expressions:
+  Candidate 1: sqrt_abs((X0 / X1))
+  Candidate 2: sqrt_abs((X0 / X1))
+  Candidate 3: sqrt_abs((X0 / X1))
+
+--------------------------------------------------
+
+22. Hubble's Law
+Target function: v = H0d
+R^2 Score: 0.999983
+Discovered expressions:
+  Candidate 1: (((4.962 / X1) + X1) * X0)
+  Candidate 2: (((4.984 / X1) + X1) * X0)
+  Candidate 3: (X0 * ((4.984 / X1) + X1))
+
+--------------------------------------------------
+
