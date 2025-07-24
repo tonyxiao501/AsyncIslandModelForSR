@@ -405,8 +405,7 @@ class MIMOSymbolicRegressor:
     self.current_crossover_rate = self.crossover_rate
     self.late_extension_triggered = False  # Reset late extension flag
     
-    scaling_range = max(int(np.log(np.mean(np.abs(X)))), int(np.log(np.mean(np.abs(y)))))
-    
+    scaling_range = max(int(abs(np.log(np.mean(np.abs(X))))), int(abs(np.log(np.mean(np.abs(y))))), 3)
     # Generate diverse initial population
     if self.n_inputs is None:
       raise ValueError("n_inputs must be set before generating population")
