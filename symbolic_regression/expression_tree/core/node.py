@@ -479,7 +479,7 @@ class ScalingOpNode(Node):
 
   def to_sympy(self, c_generator):
     operand_sympy = self.operand.to_sympy(c_generator)
-    return operand_sympy * (10**self.power)
+    return operand_sympy * (10.**self.power)
 
   def get_constants(self, constant_list):
     self.operand.get_constants(constant_list)

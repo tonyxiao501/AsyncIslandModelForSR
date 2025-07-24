@@ -841,7 +841,29 @@ class MIMOSymbolicRegressor:
 
     # Always use scikit-learn's R² implementation for consistency
     try:
-      r2 = r2_score(y.flatten(), predictions.flatten())
+      # Check for extreme scales in y that could cause numerical instability
+      mean_abs_y = np.mean(np.abs(y.flatten()))
+      
+      # Handle cases where y is all zeros or very close to it
+      if mean_abs_y < 1e-9:
+          # If y is essentially zero, R² is 1 if predictions are also zero, otherwise it's poor.
+          r2 = 1.0 if np.allclose(predictions, 0) else 0.0
+      else:
+        log_mean_abs_y = np.log(mean_abs_y)
+        
+        y_eval, predictions_eval = y, predictions
+        
+        # If data is at an extreme scale (very small or very large), rescale for stability
+        if log_mean_abs_y < -10 or log_mean_abs_y > 10:
+          if self.console_log:
+            print(f"Warning: Data is at an extreme scale (log mean abs ~ {log_mean_abs_y:.2f}). Rescaling for R² calculation.")
+          
+          # Choose a scaling factor to bring the mean absolute value to around 1
+          scaling_factor = 1.0 / mean_abs_y
+          y_eval = y * scaling_factor
+          predictions_eval = predictions * scaling_factor
+        
+        r2 = r2_score(y_eval.flatten(), predictions_eval.flatten())
       
       # For extreme values, clamp the result to prevent meaningless scores
       if abs(r2) > 100:
