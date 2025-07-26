@@ -1,20 +1,7 @@
 import numpy as np
 from .expression_tree import Expression, Node
 from .expression_tree.core.node import BinaryOpNode, UnaryOpNode
-
-def get_all_nodes(node: Node) -> list[Node]:
-    """Helper to get all nodes in a tree using a non-recursive traversal."""
-    nodes_to_visit = [node]
-    all_nodes = []
-    while nodes_to_visit:
-        current_node = nodes_to_visit.pop()
-        all_nodes.append(current_node)
-        if isinstance(current_node, BinaryOpNode):
-            nodes_to_visit.append(current_node.left)
-            nodes_to_visit.append(current_node.right)
-        elif isinstance(current_node, UnaryOpNode):
-            nodes_to_visit.append(current_node.operand)
-    return all_nodes
+from .expression_tree.utils.tree_utils import get_all_nodes
 
 def calculate_subtree_qualities(expression: Expression, X: np.ndarray, residuals: np.ndarray) -> dict[Node, float]:
     qualities = {}

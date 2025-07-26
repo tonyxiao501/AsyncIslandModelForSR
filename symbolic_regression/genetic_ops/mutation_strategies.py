@@ -11,6 +11,7 @@ from typing import Optional, Dict, List
 
 from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode, ScalingOpNode
 from ..expression_tree.utils.simplifier import ExpressionSimplifier
+from ..expression_tree.utils.tree_utils import get_all_nodes, replace_node_in_tree
 from ..generator import ExpressionGenerator
 from .context_analysis import ExpressionContextAnalyzer
 
@@ -29,7 +30,7 @@ class MutationStrategies:
                               X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
         """Context-aware mutation that considers the semantic role of nodes"""
         mutated = expression.copy()
-        nodes = self._get_all_nodes(mutated.root)
+        nodes = get_all_nodes(mutated.root)
         
         if len(nodes) <= 1:
             return None
@@ -167,7 +168,7 @@ class MutationStrategies:
                                    X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
         """Advanced mutation that preserves semantic meaning while changing structure"""
         mutated = expression.copy()
-        nodes = self._get_all_nodes(mutated.root)
+        nodes = get_all_nodes(mutated.root)
         
         if len(nodes) <= 2:
             return None
@@ -197,33 +198,33 @@ class MutationStrategies:
         if target_node.operator == '+' and isinstance(target_node.right, ConstantNode):
             if abs(target_node.right.value) < 1e-6:
                 # Remove addition of zero: x + 0 → x
-                return self._replace_node_in_tree(root, target_node, target_node.left)
+                return replace_node_in_tree(root, target_node, target_node.left)
         
         elif target_node.operator == '*':
             if isinstance(target_node.right, ConstantNode):
                 if abs(target_node.right.value - 1.0) < 1e-6:
                     # Remove multiplication by one: x * 1 → x
-                    return self._replace_node_in_tree(root, target_node, target_node.left)
+                    return replace_node_in_tree(root, target_node, target_node.left)
                 elif abs(target_node.right.value) < 1e-6:
                     # Multiplication by zero: x * 0 → 0
                     zero_node = ConstantNode(0)
-                    return self._replace_node_in_tree(root, target_node, zero_node)
+                    return replace_node_in_tree(root, target_node, zero_node)
                 elif abs(target_node.right.value + 1.0) < 1e-6:
                     # x * (-1) → -x (convert to unary minus if supported)
                     neg_node = UnaryOpNode('-', target_node.left.copy()) if hasattr(UnaryOpNode, '__init__') else None
                     if neg_node:
-                        return self._replace_node_in_tree(root, target_node, neg_node)
+                        return replace_node_in_tree(root, target_node, neg_node)
         
         elif target_node.operator == '/':
             if isinstance(target_node.right, ConstantNode):
                 if abs(target_node.right.value - 1.0) < 1e-6:
                     # Division by one: x / 1 → x
-                    return self._replace_node_in_tree(root, target_node, target_node.left)
+                    return replace_node_in_tree(root, target_node, target_node.left)
         
         elif target_node.operator == '-':
             if isinstance(target_node.right, ConstantNode) and abs(target_node.right.value) < 1e-6:
                 # Subtraction of zero: x - 0 → x
-                return self._replace_node_in_tree(root, target_node, target_node.left)
+                return replace_node_in_tree(root, target_node, target_node.left)
         
         # Commutative property transformations
         if target_node.operator in ['+', '*'] and random.random() < 0.3:
@@ -244,7 +245,7 @@ class MutationStrategies:
             ac = BinaryOpNode('*', a.copy(), c) 
             distributed = BinaryOpNode('+', ab, ac)
             
-            return self._replace_node_in_tree(root, target_node, distributed)
+            return replace_node_in_tree(root, target_node, distributed)
         
         return False
     
@@ -253,24 +254,24 @@ class MutationStrategies:
         if target_node.operator == 'sin' and random.random() < 0.2:
             # sin(x) ≈ x for small x (first-order approximation, with low probability)
             if isinstance(target_node.operand, VariableNode) and random.random() < 0.1:
-                return self._replace_node_in_tree(root, target_node, target_node.operand)
+                return replace_node_in_tree(root, target_node, target_node.operand)
         
         elif target_node.operator == 'cos' and random.random() < 0.2:
             # cos(x) → sin(x + π/2) - use sin instead with low probability
             sin_node = UnaryOpNode('sin', target_node.operand.copy())
-            return self._replace_node_in_tree(root, target_node, sin_node)
+            return replace_node_in_tree(root, target_node, sin_node)
         
         elif target_node.operator == 'exp':
             # exp(0) = 1
             if isinstance(target_node.operand, ConstantNode) and abs(target_node.operand.value) < 1e-6:
                 one_node = ConstantNode(1.0)
-                return self._replace_node_in_tree(root, target_node, one_node)
+                return replace_node_in_tree(root, target_node, one_node)
         
         elif target_node.operator == 'log':
             # log(1) = 0
             if isinstance(target_node.operand, ConstantNode) and abs(target_node.operand.value - 1.0) < 1e-6:
                 zero_node = ConstantNode(0.0)
-                return self._replace_node_in_tree(root, target_node, zero_node)
+                return replace_node_in_tree(root, target_node, zero_node)
         
         elif target_node.operator == 'sqrt':
             # sqrt(x^2) → |x| ≈ x (simplified)
@@ -278,7 +279,7 @@ class MutationStrategies:
                 target_node.operand.operator == '*' and
                 target_node.operand.left == target_node.operand.right):
                 # sqrt(x*x) → x
-                return self._replace_node_in_tree(root, target_node, target_node.operand.left)
+                return replace_node_in_tree(root, target_node, target_node.operand.left)
         
         return False
     
@@ -286,7 +287,7 @@ class MutationStrategies:
                       X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
         """Point mutation - modify constants and operators"""
         mutated = expression.copy()
-        nodes = self._get_all_nodes(mutated.root)
+        nodes = get_all_nodes(mutated.root)
 
         changed = False
         for node in nodes:
@@ -323,7 +324,7 @@ class MutationStrategies:
                         X: Optional[np.ndarray] = None, y: Optional[np.ndarray] = None) -> Optional[Expression]:
         """Replace a subtree with a new random subtree"""
         mutated = expression.copy()
-        nodes = self._get_all_nodes(mutated.root)
+        nodes = get_all_nodes(mutated.root)
 
         if len(nodes) <= 1:
             return None
@@ -336,7 +337,7 @@ class MutationStrategies:
         new_subtree = self.generator._generate_node(0, max_depth)
 
         # Replace the subtree
-        if self._replace_node_in_tree(mutated.root, target_node, new_subtree):
+        if replace_node_in_tree(mutated.root, target_node, new_subtree):
             mutated.clear_cache()
             return mutated
         return None
@@ -348,7 +349,7 @@ class MutationStrategies:
             return None
 
         mutated = expression.copy()
-        nodes = self._get_all_nodes(mutated.root)
+        nodes = get_all_nodes(mutated.root)
 
         target_node = random.choice(nodes)
 
@@ -370,7 +371,7 @@ class MutationStrategies:
             new_node = ScalingOpNode(power, target_node.copy())
 
         # Replace target with new node
-        if self._replace_node_in_tree(mutated.root, target_node, new_node):
+        if replace_node_in_tree(mutated.root, target_node, new_node):
             mutated.clear_cache()
             return mutated
         return None
@@ -386,7 +387,7 @@ class MutationStrategies:
     def safe_constant_mutation(self, expression: Expression) -> Expression:
         """Safe fallback mutation that only changes constants slightly"""
         mutated = expression.copy()
-        nodes = self._get_all_nodes(mutated.root)
+        nodes = get_all_nodes(mutated.root)
 
         constant_nodes = [n for n in nodes if isinstance(n, ConstantNode)]
         if constant_nodes:
@@ -395,45 +396,6 @@ class MutationStrategies:
             mutated.clear_cache()
 
         return mutated
-    
-    def _replace_node_in_tree(self, root: Node, target: Node, replacement: Node) -> bool:
-        """Replace target node with replacement in tree"""
-        if root == target:
-            return False  # Cannot replace root
 
-        if isinstance(root, BinaryOpNode):
-            if root.left == target:
-                root.left = replacement
-                return True
-            elif root.right == target:
-                root.right = replacement
-                return True
-            else:
-                return (self._replace_node_in_tree(root.left, target, replacement) or
-                        self._replace_node_in_tree(root.right, target, replacement))
-        elif isinstance(root, UnaryOpNode):
-            if root.operand == target:
-                root.operand = replacement
-                return True
-            else:
-                return self._replace_node_in_tree(root.operand, target, replacement)
-        elif isinstance(root, ScalingOpNode):
-            if root.operand == target:
-                root.operand = replacement
-                return True
-            else:
-                return self._replace_node_in_tree(root.operand, target, replacement)
-
-        return False
-
-    def _get_all_nodes(self, node: Node) -> List[Node]:
-        """Get all nodes in the tree (breadth-first)"""
-        nodes = [node]
-        if isinstance(node, BinaryOpNode):
-            nodes.extend(self._get_all_nodes(node.left))
-            nodes.extend(self._get_all_nodes(node.right))
-        elif isinstance(node, UnaryOpNode):
-            nodes.extend(self._get_all_nodes(node.operand))
-        elif isinstance(node, ScalingOpNode):
-            nodes.extend(self._get_all_nodes(node.operand))
-        return nodes
+    # Note: _replace_node_in_tree and _get_all_nodes methods have been removed.
+    # Use centralized tree_utils.replace_node_in_tree and tree_utils.get_all_nodes instead.

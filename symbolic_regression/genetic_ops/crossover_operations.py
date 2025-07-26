@@ -10,6 +10,7 @@ import random
 from typing import Tuple, List
 
 from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
+from ..expression_tree.utils.tree_utils import get_all_nodes, replace_node_in_tree
 from ..quality_assessment import calculate_subtree_qualities
 
 
@@ -36,8 +37,8 @@ class CrossoverOperations:
         child1 = parent1.copy()
         child2 = parent2.copy()
 
-        nodes1 = self._get_all_nodes(child1.root)
-        nodes2 = self._get_all_nodes(child2.root)
+        nodes1 = get_all_nodes(child1.root)
+        nodes2 = get_all_nodes(child2.root)
 
         if len(nodes1) > 1 and len(nodes2) > 1:
             # Select crossover points (avoid root for diversity)
@@ -65,8 +66,8 @@ class CrossoverOperations:
         child2 = parent2.copy()
 
         # Exchange constants
-        constants1 = [n for n in self._get_all_nodes(child1.root) if isinstance(n, ConstantNode)]
-        constants2 = [n for n in self._get_all_nodes(child2.root) if isinstance(n, ConstantNode)]
+        constants1 = [n for n in get_all_nodes(child1.root) if isinstance(n, ConstantNode)]
+        constants2 = [n for n in get_all_nodes(child2.root) if isinstance(n, ConstantNode)]
 
         if constants1 and constants2:
             # Random constant exchange
@@ -156,8 +157,8 @@ class CrossoverOperations:
         child1 = parent1.copy()
         child2 = parent2.copy()
         
-        nodes1 = self._get_all_nodes(child1.root)
-        nodes2 = self._get_all_nodes(child2.root)
+        nodes1 = get_all_nodes(child1.root)
+        nodes2 = get_all_nodes(child2.root)
         
         # Only perform crossover if both trees have similar structure
         if len(nodes1) == len(nodes2):
@@ -199,16 +200,9 @@ class CrossoverOperations:
                 root.operand = replacement
                 return True
             else:
-                return self._replace_node_in_tree(root.operand, target, replacement)
+                return replace_node_in_tree(root.operand, target, replacement)
 
         return False
 
-    def _get_all_nodes(self, node: Node) -> List[Node]:
-        """Get all nodes in the tree (breadth-first)"""
-        nodes = [node]
-        if isinstance(node, BinaryOpNode):
-            nodes.extend(self._get_all_nodes(node.left))
-            nodes.extend(self._get_all_nodes(node.right))
-        elif isinstance(node, UnaryOpNode):
-            nodes.extend(self._get_all_nodes(node.operand))
-        return nodes
+    # Note: _get_all_nodes method has been removed.
+    # Use centralized tree_utils.get_all_nodes instead.

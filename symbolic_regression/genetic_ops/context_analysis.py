@@ -10,6 +10,11 @@ from typing import Dict, List
 from collections import Counter
 
 from ..expression_tree import Expression, Node, ConstantNode, VariableNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
+from ..expression_tree.utils.tree_utils import (
+    get_all_nodes, calculate_tree_depth, calculate_subtree_sizes,
+    collect_subtree_patterns, calculate_redundancy_score,
+    calculate_structural_balance, get_variable_usage_counts
+)
 
 
 class ExpressionContextAnalyzer:
@@ -20,7 +25,7 @@ class ExpressionContextAnalyzer:
     
     def analyze_expression_context(self, expression: Expression) -> Dict:
         """Advanced expression context analysis for intelligent mutation strategy selection"""
-        nodes = self._get_all_nodes(expression.root)
+        nodes = get_all_nodes(expression.root)
         
         if not nodes:
             return self._empty_context()
@@ -38,19 +43,19 @@ class ExpressionContextAnalyzer:
         operator_diversity = self._calculate_operator_diversity(binary_ops, unary_ops)
         
         # 2. Structural balance (tree symmetry and balance)
-        structural_balance = self._calculate_structural_balance(expression.root)
+        structural_balance = calculate_structural_balance(expression.root)
         
         # 3. Nonlinearity score (presence of nonlinear functions)
         nonlinearity_score = self._calculate_nonlinearity_score(binary_ops, unary_ops)
         
         # 4. Improved redundancy detection using AST patterns
-        redundancy_score = self._calculate_redundancy_score(expression.root)
+        redundancy_score = calculate_redundancy_score(expression.root)
         
         # 5. Variable usage symmetry
         symmetry_score = self._calculate_variable_symmetry(variables)
         
         # 6. Complexity distribution analysis
-        depth = self._calculate_depth(expression.root)
+        depth = calculate_tree_depth(expression.root)
         complexity = expression.complexity()
         
         return {
@@ -88,29 +93,6 @@ class ExpressionContextAnalyzer:
             operator_types.add(node.operator)
         return len(operator_types) / max(1, len(binary_ops) + len(unary_ops))
     
-    def _calculate_structural_balance(self, root: Node) -> float:
-        """Calculate structural balance (tree symmetry)"""
-        def calculate_subtree_sizes(node):
-            if isinstance(node, (ConstantNode, VariableNode)):
-                return 1
-            elif isinstance(node, UnaryOpNode):
-                return 1 + calculate_subtree_sizes(node.operand)
-            elif isinstance(node, BinaryOpNode):
-                left_size = calculate_subtree_sizes(node.left)
-                right_size = calculate_subtree_sizes(node.right)
-                return 1 + left_size + right_size
-            return 1
-        
-        structural_balance = 0.5  # Default for single nodes
-        if isinstance(root, BinaryOpNode):
-            left_size = calculate_subtree_sizes(root.left)
-            right_size = calculate_subtree_sizes(root.right)
-            total_size = left_size + right_size
-            if total_size > 0:
-                structural_balance = 1.0 - abs(left_size - right_size) / total_size
-        
-        return structural_balance
-    
     def _calculate_nonlinearity_score(self, binary_ops: List[BinaryOpNode], unary_ops: List[UnaryOpNode]) -> float:
         """Calculate nonlinearity score based on presence of nonlinear functions"""
         nonlinear_ops = {'sin', 'cos', 'exp', 'log', 'sqrt', 'tan', 'pow'}
@@ -131,84 +113,13 @@ class ExpressionContextAnalyzer:
         else:
             return 1.0
     
-    def _calculate_redundancy_score(self, root: Node) -> float:
-        """Calculate redundancy score based on repeated subtree patterns"""
-        try:
-            # Get all subtrees and their string representations
-            subtrees = []
-            
-            def collect_subtrees(node):
-                if isinstance(node, (ConstantNode, VariableNode)):
-                    subtrees.append(node.to_string() if hasattr(node, 'to_string') else str(node))
-                elif isinstance(node, UnaryOpNode):
-                    subtree_str = f"{node.operator}({node.operand.to_string() if hasattr(node.operand, 'to_string') else str(node.operand)})"
-                    subtrees.append(subtree_str)
-                    collect_subtrees(node.operand)
-                elif isinstance(node, BinaryOpNode):
-                    left_str = node.left.to_string() if hasattr(node.left, 'to_string') else str(node.left)
-                    right_str = node.right.to_string() if hasattr(node.right, 'to_string') else str(node.right)
-                    subtree_str = f"({left_str} {node.operator} {right_str})"
-                    subtrees.append(subtree_str)
-                    collect_subtrees(node.left)
-                    collect_subtrees(node.right)
-                elif isinstance(node, ScalingOpNode):
-                    operand_str = node.operand.to_string() if hasattr(node.operand, 'to_string') else str(node.operand)
-                    subtree_str = f"scale({operand_str}, {node.power})"
-                    subtrees.append(subtree_str)
-                    collect_subtrees(node.operand)
-            
-            collect_subtrees(root)
-            
-            if len(subtrees) <= 1:
-                return 0.0
-            
-            # Count frequency of each subtree pattern
-            subtree_counts = Counter(subtrees)
-            
-            # Calculate redundancy as ratio of repeated subtrees
-            total_subtrees = len(subtrees)
-            repeated_count = sum(count - 1 for count in subtree_counts.values() if count > 1)
-            
-            redundancy_score = repeated_count / max(1, total_subtrees)
-            return min(1.0, redundancy_score)
-            
-        except Exception:
-            # Fallback to simple string-based redundancy
-            expr_str = str(root)
-            tokens = expr_str.split()
-            if len(tokens) <= 1:
-                return 0.0
-            unique_tokens = len(set(tokens))
-            redundancy = 1.0 - (unique_tokens / len(tokens))
-            return max(0.0, redundancy)
-    
-    def _calculate_depth(self, node: Node) -> int:
-        """Calculate the depth of a node tree"""
-        if isinstance(node, (ConstantNode, VariableNode)):
-            return 1
-        elif isinstance(node, UnaryOpNode):
-            return 1 + self._calculate_depth(node.operand)
-        elif isinstance(node, BinaryOpNode):
-            return 1 + max(self._calculate_depth(node.left), self._calculate_depth(node.right))
-        elif isinstance(node, ScalingOpNode):
-            return 1 + self._calculate_depth(node.operand)
-        return 1
-    
-    def _get_all_nodes(self, node: Node) -> List[Node]:
-        """Get all nodes in the tree (breadth-first)"""
-        nodes = [node]
-        if isinstance(node, BinaryOpNode):
-            nodes.extend(self._get_all_nodes(node.left))
-            nodes.extend(self._get_all_nodes(node.right))
-        elif isinstance(node, UnaryOpNode):
-            nodes.extend(self._get_all_nodes(node.operand))
-        elif isinstance(node, ScalingOpNode):
-            nodes.extend(self._get_all_nodes(node.operand))
-        return nodes
+    # Note: _calculate_depth, _get_all_nodes, _calculate_structural_balance, 
+    # and _calculate_redundancy_score methods have been removed.
+    # Use centralized tree_utils functions instead.
     
     def calculate_node_importance(self, expression: Expression, X: np.ndarray, y: np.ndarray) -> Dict[int, float]:
         """Calculate importance/sensitivity of each node for data-driven mutations"""
-        nodes = self._get_all_nodes(expression.root)
+        nodes = get_all_nodes(expression.root)
         node_importance = {}
         
         # **PERFORMANCE FIX**: Use sampling for large datasets and limit constant nodes evaluated
