@@ -435,3 +435,242 @@ def get_unary_ops(node: Node) -> List[UnaryOpNode]:
 def get_scaling_ops(node: Node) -> List[ScalingOpNode]:
     """Get all scaling operation nodes in the tree."""
     return cast(List[ScalingOpNode], find_nodes_by_type(node, ScalingOpNode))
+
+
+# ========== ENHANCED NODE REPLACEMENT UTILITIES ==========
+# These functions eliminate redundancy in node manipulation across the codebase
+
+def swap_binary_operands(node: BinaryOpNode) -> bool:
+    """
+    Swap the left and right operands of a binary operation node.
+    Only works with commutative operators (+, *).
+    
+    Args:
+        node: Binary operation node to swap operands
+    
+    Returns:
+        True if swap was successful, False if operator is not commutative
+    """
+    if node.operator in ['+', '*']:
+        node.left, node.right = node.right, node.left
+        return True
+    return False
+
+
+def replace_child_node(parent: Node, old_child: Node, new_child: Node) -> bool:
+    """
+    Replace a direct child node with a new node.
+    More efficient than tree-wide replacement when you know the parent.
+    
+    Args:
+        parent: Parent node containing the child to replace
+        old_child: Current child node to be replaced
+        new_child: New child node to replace with
+    
+    Returns:
+        True if replacement was successful, False if old_child is not a direct child
+    """
+    if isinstance(parent, BinaryOpNode):
+        if parent.left == old_child:
+            parent.left = new_child
+            return True
+        elif parent.right == old_child:
+            parent.right = new_child
+            return True
+    elif isinstance(parent, (UnaryOpNode, ScalingOpNode)):
+        if parent.operand == old_child:
+            parent.operand = new_child
+            return True
+    return False
+
+
+def find_parent_node(root: Node, target: Node) -> Optional[Node]:
+    """
+    Find the parent node of a target node in the tree.
+    
+    Args:
+        root: Root node of the tree
+        target: Node whose parent we want to find
+    
+    Returns:
+        Parent node if found, None if target is root or not in tree
+    """
+    if root == target:
+        return None
+    
+    def _search_parent(current: Node) -> Optional[Node]:
+        if isinstance(current, BinaryOpNode):
+            if current.left == target or current.right == target:
+                return current
+            # Search in subtrees
+            left_result = _search_parent(current.left)
+            if left_result:
+                return left_result
+            return _search_parent(current.right)
+        
+        elif isinstance(current, (UnaryOpNode, ScalingOpNode)):
+            if current.operand == target:
+                return current
+            return _search_parent(current.operand)
+        
+        return None
+    
+    return _search_parent(root)
+
+
+def replace_subtree_at_path(root: Node, path: List[str], replacement: Node) -> bool:
+    """
+    Replace a subtree using a path description (e.g., ['left', 'right', 'operand']).
+    Useful for targeted replacements without searching the entire tree.
+    
+    Args:
+        root: Root node of the tree
+        path: List of attribute names describing path to target node
+        replacement: Node to place at the target location
+    
+    Returns:
+        True if replacement was successful, False if path is invalid
+    """
+    if not path:
+        return False
+    
+    current = root
+    
+    # Navigate to parent of target node
+    for step in path[:-1]:
+        if hasattr(current, step):
+            current = getattr(current, step)
+        else:
+            return False
+    
+    # Replace the final node
+    final_step = path[-1]
+    if hasattr(current, final_step):
+        setattr(current, final_step, replacement)
+        return True
+    
+    return False
+
+
+def bulk_replace_nodes(root: Node, replacement_map: Dict[Node, Node]) -> int:
+    """
+    Replace multiple nodes in a single tree traversal.
+    More efficient than multiple individual replacements.
+    
+    Args:
+        root: Root node of the tree
+        replacement_map: Dictionary mapping old nodes to new nodes
+    
+    Returns:
+        Number of successful replacements made
+    """
+    if not replacement_map:
+        return 0
+    
+    replacements_made = 0
+    
+    def _bulk_replace(current: Node) -> None:
+        nonlocal replacements_made
+        
+        if isinstance(current, BinaryOpNode):
+            # Check and replace children
+            if current.left in replacement_map:
+                current.left = replacement_map[current.left]
+                replacements_made += 1
+            if current.right in replacement_map:
+                current.right = replacement_map[current.right]
+                replacements_made += 1
+            
+            # Recursively process subtrees
+            _bulk_replace(current.left)
+            _bulk_replace(current.right)
+        
+        elif isinstance(current, (UnaryOpNode, ScalingOpNode)):
+            # Check and replace operand
+            if current.operand in replacement_map:
+                current.operand = replacement_map[current.operand]
+                replacements_made += 1
+            
+            # Recursively process subtree
+            _bulk_replace(current.operand)
+    
+    _bulk_replace(root)
+    return replacements_made
+
+
+def get_node_path(root: Node, target: Node) -> Optional[List[str]]:
+    """
+    Get the path from root to target node as a list of attribute names.
+    Useful for documenting node locations or recreating access patterns.
+    
+    Args:
+        root: Root node of the tree
+        target: Node to find path to
+    
+    Returns:
+        List of attribute names leading to target, None if not found
+    """
+    if root == target:
+        return []
+    
+    def _find_path(current: Node, current_path: List[str]) -> Optional[List[str]]:
+        if isinstance(current, BinaryOpNode):
+            if current.left == target:
+                return current_path + ['left']
+            elif current.right == target:
+                return current_path + ['right']
+            
+            # Search left subtree
+            left_path = _find_path(current.left, current_path + ['left'])
+            if left_path:
+                return left_path
+            
+            # Search right subtree
+            return _find_path(current.right, current_path + ['right'])
+        
+        elif isinstance(current, (UnaryOpNode, ScalingOpNode)):
+            if current.operand == target:
+                return current_path + ['operand']
+            return _find_path(current.operand, current_path + ['operand'])
+        
+        return None
+    
+    return _find_path(root, [])
+
+
+def create_node_replacement_context(root: Node, target: Node) -> Optional[Dict[str, Any]]:
+    """
+    Create a context dictionary with information needed for node replacement.
+    Combines parent finding, path determination, and sibling information.
+    
+    Args:
+        root: Root node of the tree
+        target: Node to create replacement context for
+    
+    Returns:
+        Dictionary with replacement context information, None if target not found
+    """
+    parent = find_parent_node(root, target)
+    path = get_node_path(root, target)
+    
+    if path is None:
+        return None
+    
+    context = {
+        'target': target,
+        'parent': parent,
+        'path': path,
+        'is_root': parent is None,
+        'attribute_name': path[-1] if path else None,
+    }
+    
+    # Add sibling information for binary nodes
+    if parent and isinstance(parent, BinaryOpNode):
+        if parent.left == target:
+            context['sibling'] = parent.right
+            context['position'] = 'left'
+        else:
+            context['sibling'] = parent.left
+            context['position'] = 'right'
+    
+    return context

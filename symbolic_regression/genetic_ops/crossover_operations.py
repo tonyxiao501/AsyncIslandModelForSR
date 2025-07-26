@@ -10,7 +10,9 @@ import random
 from typing import Tuple, List
 
 from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
-from ..expression_tree.utils.tree_utils import get_all_nodes, replace_node_in_tree
+from ..expression_tree.utils.tree_utils import (
+    get_all_nodes, replace_node_in_tree, bulk_replace_nodes
+)
 from ..quality_assessment import calculate_subtree_qualities
 
 
@@ -48,12 +50,13 @@ class CrossoverOperations:
             node1 = nodes1[idx1]
             node2 = nodes2[idx2]
 
-            # Exchange subtrees
+            # Exchange subtrees using bulk replacement (more efficient)
             subtree1 = node1.copy()
             subtree2 = node2.copy()
 
-            self._replace_node_in_tree(child1.root, node1, subtree2)
-            self._replace_node_in_tree(child2.root, node2, subtree1)
+            # Use bulk replacement for simultaneous swapping
+            bulk_replace_nodes(child1.root, {node1: subtree2})
+            bulk_replace_nodes(child2.root, {node2: subtree1})
 
             child1.clear_cache()
             child2.clear_cache()
@@ -117,12 +120,12 @@ class CrossoverOperations:
         if crossover_point1 is child1.root or crossover_point2 is child2.root:
             return self.structural_crossover(parent1, parent2)  # Fallback
 
-        # 6. Perform the swap
+        # 6. Perform the swap using bulk replacement for efficiency
         subtree1 = crossover_point1.copy()
         subtree2 = crossover_point2.copy()
 
-        self._replace_node_in_tree(child1.root, crossover_point1, subtree2)
-        self._replace_node_in_tree(child2.root, crossover_point2, subtree1)
+        bulk_replace_nodes(child1.root, {crossover_point1: subtree2})
+        bulk_replace_nodes(child2.root, {crossover_point2: subtree1})
 
         child1.clear_cache()
         child2.clear_cache()
@@ -180,29 +183,8 @@ class CrossoverOperations:
         child2.clear_cache()
         return child1, child2
     
-    def _replace_node_in_tree(self, root: Node, target: Node, replacement: Node) -> bool:
-        """Replace target node with replacement in tree"""
-        if root == target:
-            return False  # Cannot replace root
-
-        if isinstance(root, BinaryOpNode):
-            if root.left == target:
-                root.left = replacement
-                return True
-            elif root.right == target:
-                root.right = replacement
-                return True
-            else:
-                return (self._replace_node_in_tree(root.left, target, replacement) or
-                        self._replace_node_in_tree(root.right, target, replacement))
-        elif isinstance(root, UnaryOpNode):
-            if root.operand == target:
-                root.operand = replacement
-                return True
-            else:
-                return replace_node_in_tree(root.operand, target, replacement)
-
-        return False
+    # Note: _replace_node_in_tree method has been removed.
+    # Use centralized tree_utils.replace_node_in_tree instead.
 
     # Note: _get_all_nodes method has been removed.
     # Use centralized tree_utils.get_all_nodes instead.

@@ -11,7 +11,9 @@ from typing import Optional, Dict, List
 
 from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode, ScalingOpNode
 from ..expression_tree.utils.simplifier import ExpressionSimplifier
-from ..expression_tree.utils.tree_utils import get_all_nodes, replace_node_in_tree
+from ..expression_tree.utils.tree_utils import (
+    get_all_nodes, replace_node_in_tree, swap_binary_operands
+)
 from ..generator import ExpressionGenerator
 from .context_analysis import ExpressionContextAnalyzer
 
@@ -229,8 +231,7 @@ class MutationStrategies:
         # Commutative property transformations
         if target_node.operator in ['+', '*'] and random.random() < 0.3:
             # Swap operands for commutative operators: a + b → b + a
-            target_node.left, target_node.right = target_node.right, target_node.left
-            return True
+            return swap_binary_operands(target_node)
         
         # Distributive property (limited cases)
         if (target_node.operator == '*' and isinstance(target_node.right, BinaryOpNode) and 

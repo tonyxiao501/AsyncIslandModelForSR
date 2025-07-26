@@ -10,6 +10,7 @@ from typing import List, Dict
 from collections import Counter
 
 from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, ConstantNode, VariableNode
+from ..expression_tree.utils.tree_utils import calculate_tree_depth
 
 
 class DiversityMetrics:
@@ -115,8 +116,8 @@ class DiversityMetrics:
             size_diff = abs(size1 - size2) / max(1, max(size1, size2))
             
             # 2. Depth-based distance  
-            depth1 = self._calculate_depth(expr1.root)
-            depth2 = self._calculate_depth(expr2.root)
+            depth1 = calculate_tree_depth(expr1.root)
+            depth2 = calculate_tree_depth(expr2.root)
             depth_diff = abs(depth1 - depth2) / max(1, max(depth1, depth2))
             
             # 3. Operator signature distance
@@ -231,15 +232,8 @@ class DiversityMetrics:
         # In a complete implementation, this would generate new diverse individuals
         return population
     
-    def _calculate_depth(self, node: Node) -> int:
-        """Calculate the depth of a node tree"""
-        if isinstance(node, (ConstantNode, VariableNode)):
-            return 1
-        elif isinstance(node, UnaryOpNode):
-            return 1 + self._calculate_depth(node.operand)
-        elif isinstance(node, BinaryOpNode):
-            return 1 + max(self._calculate_depth(node.left), self._calculate_depth(node.right))
-        return 1
+    # Note: _calculate_depth method has been removed.
+    # Use centralized tree_utils.calculate_tree_depth instead.
     
     def _get_operator_signature(self, node: Node) -> Dict[str, int]:
         """Get operator frequency signature for a tree"""

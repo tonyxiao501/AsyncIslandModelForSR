@@ -2,6 +2,7 @@ import numpy as np
 from typing import Optional
 from ..core.node import Node, VariableNode, ConstantNode, BinaryOpNode, UnaryOpNode, ScalingOpNode
 from ..optimization.memory_pool import get_global_pool
+from .tree_utils import count_nested_depth
 
 
 class ExpressionSimplifier:
@@ -37,7 +38,7 @@ class ExpressionSimplifier:
         return True
 
       if isinstance(operand, UnaryOpNode):
-        nested_depth = ExpressionSimplifier._count_nested_depth(operand)
+        nested_depth = count_nested_depth(operand)
         if nested_depth > 2:
           return True
 
@@ -51,15 +52,6 @@ class ExpressionSimplifier:
         return True
 
     return False
-
-  @staticmethod
-  def _count_nested_depth(node: Node) -> int:
-    if isinstance(node, UnaryOpNode) or isinstance(node, ScalingOpNode):
-      return 1 + ExpressionSimplifier._count_nested_depth(node.operand)
-    elif isinstance(node, BinaryOpNode):
-      return max(ExpressionSimplifier._count_nested_depth(node.left),
-                 ExpressionSimplifier._count_nested_depth(node.right))
-    return 0
 
   @staticmethod
   def _apply_simplification_rules(node: Node) -> Optional[Node]:
