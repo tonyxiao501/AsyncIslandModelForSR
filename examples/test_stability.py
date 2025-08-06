@@ -5,7 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
-from symbolic_regression.mimo_regressor import MIMOSymbolicRegressor
+from symbolic_regression.regressor import MIMOSymbolicRegressor
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 

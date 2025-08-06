@@ -13,7 +13,7 @@ from ..expression_tree import Expression, Node, BinaryOpNode, UnaryOpNode, Const
 from ..expression_tree.utils.tree_utils import (
     get_all_nodes, replace_node_in_tree, bulk_replace_nodes
 )
-from ..quality_assessment import calculate_subtree_qualities
+from ..utilities import calculate_subtree_qualities
 
 
 class CrossoverOperations:

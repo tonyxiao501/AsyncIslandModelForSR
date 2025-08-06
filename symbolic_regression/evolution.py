@@ -11,7 +11,7 @@ from scipy.optimize import curve_fit, OptimizeWarning
 
 from .expression_tree import Expression
 from .generator import ExpressionGenerator
-from .genetic_operations import GeneticOperations
+from .genetic_ops import GeneticOperations
 from .population_management import inject_diversity_optimized
 from .logging_system import get_logger, log_milestone, log_evolution_step, log_warning, log_debug
 
@@ -24,7 +24,7 @@ def update_adaptive_parameters(regressor, generation: int, diversity_score: floa
                                diversity_threshold: float, mutation_rate: float, crossover_rate: float,
                                current_mutation_rate: float, current_crossover_rate: float,
                                stagnation_counter: int):
-    """Enhanced adaptive parameter updates"""
+    """Enhanced adaptive parameter updates - EXACT COPY from working version"""
     # Base adaptation based on diversity and stagnation - more conservative
     if diversity_score < diversity_threshold:
         # Low diversity - increase exploration moderately
@@ -42,8 +42,8 @@ def update_adaptive_parameters(regressor, generation: int, diversity_score: floa
     elif plateau_counter > 15:  # Increased threshold
         mutation_multiplier *= 1.1  # Reduced from 1.2
 
-    # Apply multipliers with bounds - more aggressive exploration when needed
-    new_mutation_rate = np.clip(mutation_rate * mutation_multiplier, 0.05, 0.6)  # Increased max from 0.4
+    # Apply multipliers with bounds - KEEP WORKING VERSION BOUNDS
+    new_mutation_rate = np.clip(mutation_rate * mutation_multiplier, 0.05, 0.4)  # Use working max of 0.4
     new_crossover_rate = np.clip(crossover_rate * crossover_multiplier, 0.6, 0.95)  # Keep same
 
     # More gradual return to original rates when performing well
@@ -60,7 +60,7 @@ def update_adaptive_parameters(regressor, generation: int, diversity_score: floa
 def restart_population_enhanced(population: List[Expression], fitness_scores: List[float],
                                 generator: ExpressionGenerator, population_size: int, n_inputs: int,
                                 pop_manager: 'PopulationManager'):
-    """Enhanced population restart with better elite preservation"""
+    """Enhanced population restart with better elite preservation - EXACT COPY from working version"""
     # Keep top performers (more aggressive selection)
     elite_count = max(2, int(population_size * 0.05))  # Keep top 5%
     elite_indices = np.argsort(fitness_scores)[-elite_count:]
@@ -95,7 +95,7 @@ def restart_population_enhanced(population: List[Expression], fitness_scores: Li
 
 
 def should_optimize_constants_enhanced(expr_index: int, population_size: int, steps_unchanged: int, generation: int) -> bool:
-    """Enhanced logic for when to optimize constants"""
+    """Enhanced logic for when to optimize constants - EXACT COPY from working version"""
     if expr_index < population_size * 0.1:  # Top 10%
         return True
 
@@ -112,7 +112,7 @@ def should_optimize_constants_enhanced(expr_index: int, population_size: int, st
 
 
 def optimize_constants(expression: Expression, X: np.ndarray, y: np.ndarray) -> bool:
-    """Optimize constants in an expression using curve fitting"""
+    """Optimize constants in an expression using curve fitting - EXACT COPY from working version"""
     try:
         expr_vec = expression.vector_lambdify()
         if expr_vec is not None:
@@ -145,6 +145,7 @@ class EvolutionEngine:
                      constant_optimize: bool = False) -> List[Expression]:
         """
         Run the complete evolution process and return the best expressions.
+        EXACT COPY from working version evolution.py
         """
         # Initialize generator and genetic operations
         if self.regressor.n_inputs is None:
@@ -167,7 +168,7 @@ class EvolutionEngine:
 
         log_milestone("Starting evolution...")
 
-        # Main evolution loop
+        # Main evolution loop - EXACT COPY from working version
         for generation in range(self.regressor.generations):
             # Evaluate population
             if self.regressor.use_multi_scale_fitness and self.regressor.fitness_evaluator:
@@ -269,8 +270,8 @@ class EvolutionEngine:
                     self.regressor.current_mutation_rate, self.regressor.current_crossover_rate, self.regressor.stagnation_counter
                 )
 
-            # Handle long-term stagnation with population restart - less aggressive
-            if self.regressor.stagnation_counter >= 40:  # Increased from 25 to 40
+            # Handle long-term stagnation with population restart - WORKING VERSION: 25 threshold
+            if self.regressor.stagnation_counter >= 25:  # KEEP ORIGINAL 25, not 40
                 log_milestone(f"Population restart at generation {generation} (stagnation: {self.regressor.stagnation_counter})")
                 
                 population = self._restart_population_with_great_powers(population, fitness_scores, generator)
@@ -304,7 +305,7 @@ class EvolutionEngine:
             # Genetic operations (selection, crossover, mutation)
             if generation < self.regressor.generations - 1:  # Don't evolve on the last generation
                 population = self._apply_genetic_operations(
-                    population, fitness_scores, genetic_ops, generator
+                    population, fitness_scores, genetic_ops, generator, diversity_score
                 )
 
         # Final evaluation and return best expressions
@@ -389,9 +390,9 @@ class EvolutionEngine:
         return fitness_scores
 
     def _apply_genetic_operations(self, population: List[Expression], fitness_scores: List[float],
-                                genetic_ops: GeneticOperations, generator: ExpressionGenerator) -> List[Expression]:
+                                genetic_ops: GeneticOperations, generator: ExpressionGenerator, diversity_score: float) -> List[Expression]:
         """Apply selection, crossover, and mutation operations"""
-        from .genetic_operations import enhanced_selection, tournament_selection
+        from .selection import enhanced_selection, tournament_selection
         
         new_population = []
         
@@ -404,12 +405,15 @@ class EvolutionEngine:
         while len(new_population) < self.regressor.population_size:
             if np.random.rand() < self.regressor.current_crossover_rate:
                 # Crossover
-                parent1 = enhanced_selection(population, fitness_scores, self.regressor.tournament_size)
-                parent2 = enhanced_selection(population, fitness_scores, self.regressor.tournament_size)
+                parent1 = enhanced_selection(population, fitness_scores, diversity_score, 
+                                             self.regressor.diversity_threshold, self.regressor.tournament_size, 
+                                             self.regressor.stagnation_counter)
+                parent2 = enhanced_selection(population, fitness_scores, diversity_score, 
+                                             self.regressor.diversity_threshold, self.regressor.tournament_size, 
+                                             self.regressor.stagnation_counter)
                 
-                # Get crossover offspring (simple wrapper returns single best child)
-                offspring1 = genetic_ops.crossover(parent1, parent2)
-                offspring2 = genetic_ops.crossover(parent2, parent1)  # Second crossover with swapped parents
+                # Get crossover offspring (returns tuple of two children)
+                offspring1, offspring2 = genetic_ops.crossover(parent1, parent2)
                 
                 # Mutation
                 if np.random.rand() < self.regressor.current_mutation_rate:
@@ -429,7 +433,8 @@ class EvolutionEngine:
                     new_population.append(parent2.copy())
             else:
                 # Direct selection and mutation
-                parent = tournament_selection(population, fitness_scores, self.regressor.tournament_size)
+                parent = tournament_selection(population, fitness_scores, self.regressor.tournament_size, 
+                                              self.regressor.stagnation_counter)
                 offspring = genetic_ops.mutate(parent, self.regressor.current_mutation_rate)
                 
                 if self.pop_manager.is_expression_valid_cached(offspring):

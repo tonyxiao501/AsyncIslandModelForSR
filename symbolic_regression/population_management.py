@@ -14,7 +14,7 @@ from .utilities import calculate_expression_uniqueness, string_similarity
 
 
 class PopulationManager:
-    """Optimized population management with caching and efficient operations"""
+    """Optimized population management with caching and efficient operations - EXACT COPY from working version"""
     
     def __init__(self, n_inputs: int, max_depth: int = 6):
         self.n_inputs = n_inputs
@@ -151,7 +151,7 @@ def generate_diverse_population_optimized(generator: ExpressionGenerator,
                                         population_size: int, 
                                         n_inputs: int,
                                         pop_manager: PopulationManager) -> List[Expression]:
-    """Optimized diverse population generation with batching"""
+    """Optimized diverse population generation with batching - EXACT COPY from working version"""
     population = []
     max_depth = pop_manager.max_depth
     
@@ -335,36 +335,7 @@ def inject_diversity_optimized(population: List[Expression],
     return new_population
 
 
-def evaluate_population_enhanced_optimized(population: List[Expression],
-                                         X: np.ndarray, y: np.ndarray,
-                                         fitness_func: Callable[[np.ndarray, np.ndarray], float],
-                                         parsimony_coefficient: float,
-                                         pop_manager: PopulationManager) -> List[float]:
-    """Optimized population evaluation with caching and batch operations"""
-    fitness_scores = []
-    
-    for expr in population:
-        try:
-            # Use cached complexity
-            complexity = pop_manager.get_expression_complexity(expr)
-            
-            # Evaluate expression
-            predictions = expr.evaluate(X)
-            
-            # Calculate fitness
-            base_fitness = fitness_func(y, predictions)
-            fitness = base_fitness - parsimony_coefficient * complexity
-            
-            fitness_scores.append(fitness)
-            
-        except Exception:
-            # Invalid expression
-            fitness_scores.append(-10.0)
-    
-    return fitness_scores
-
-
-# Helper functions for expression generation
+# Helper functions for expression generation - EXACT COPIES from working version
 def generate_simple_combination_optimized(generator: ExpressionGenerator, n_inputs: int) -> Expression:
     """Generate simple combination expressions optimized for performance"""
     strategy = np.random.choice(['linear', 'product', 'ratio'])
@@ -512,6 +483,7 @@ class GreatPowers:
     Maintains the top 5 expressions (Great Powers) dynamically across generations.
     These expressions are preserved from diversity injection and population restarts.
     Includes advanced redundancy elimination to prevent duplicate expressions.
+    EXACT COPY from working version
     """
     
     def __init__(self, max_powers: int = 5, similarity_threshold: float = 0.98):
@@ -731,34 +703,6 @@ class GreatPowers:
             }
         
         return {"status": "no_fitness_drop"}
-    
-    def clean_redundant_powers(self, X: np.ndarray, console_log: bool = False) -> int:
-        """Remove redundant Great Powers based on semantic similarity"""
-        if len(self.powers) <= 1:
-            return 0
-        
-        initial_count = len(self.powers)
-        cleaned_powers = []
-        
-        for i, power in enumerate(self.powers):
-            is_redundant = False
-            
-            # Check against already cleaned powers
-            for cleaned_power in cleaned_powers:
-                redundant, reason = self._is_expression_redundant(power['expression'], X)
-                if redundant:
-                    is_redundant = True
-                    if console_log:
-                        print(f"    Removing redundant Great Power {i+1}: {reason}")
-                    break
-            
-            if not is_redundant:
-                cleaned_powers.append(power)
-        
-        self.powers = cleaned_powers
-        removed_count = initial_count - len(self.powers)
-        
-        return removed_count
     
     def get_redundancy_stats(self) -> Dict[str, int]:
         """Get redundancy rejection statistics"""

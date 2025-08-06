@@ -8,7 +8,7 @@ def _fit_worker(config: tuple):
   Each process runs independently with unique parameters for diversity.
   """
   # Move the import here to avoid circular import
-  from .mimo_regressor import MIMOSymbolicRegressor
+  from .regressor import MIMOSymbolicRegressor
   from .expression_tree.optimization.memory_pool import reset_global_pool
 
   regressor_params, X, y, constant_optimize, shared_manager, worker_id, debug_csv_path = config

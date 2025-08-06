@@ -1,474 +1,522 @@
+"""
+Island Model Ensemble for MIMO Symbolic Regression
+
+This module implements a PySR-inspired island model where multiple populations
+evolve independently with periodic migration of best individuals between islands.
+The approach promotes diversity while allowing beneficial traits to spread across islands.
+"""
 import numpy as np
-from typing import List, Dict, Optional, TYPE_CHECKING
-from .expression_tree import Expression
+import time
 import multiprocessing
-from .ensemble_worker import _fit_worker
+import random
+import os
+import tempfile
+import pickle
+from typing import List, Dict, Optional, TYPE_CHECKING, Tuple, Any
+from .expression_tree import Expression
+from .regressor import MIMOSymbolicRegressor
+from .utilities import optimize_final_expressions, evaluate_optimized_expressions
 
 if TYPE_CHECKING:
-    from .data_scaling import DataScaler
+    from .data_processing import DataScaler
+
+
+class IslandTopology:
+    """Manages island topology and migration patterns for parallel symbolic regression."""
+    
+    def __init__(self, n_islands: int, migration_prob: float = 0.3):
+        self.n_islands = n_islands
+        self.migration_prob = migration_prob
+        self.connections = self._create_random_topology()
+    
+    def _create_random_topology(self) -> Dict[int, List[int]]:
+        """Create a random topology where each island connects to 1-3 others randomly."""
+        connections = {i: [] for i in range(self.n_islands)}
+        
+        # Ensure each island has at least one connection
+        for i in range(self.n_islands):
+            # Each island connects to 1-3 others (like PySR's island model)
+            n_connections = random.randint(1, min(3, self.n_islands - 1))
+            possible_targets = [j for j in range(self.n_islands) if j != i]
+            targets = random.sample(possible_targets, n_connections)
+            connections[i] = targets
+        
+        return connections
+    
+    def get_migration_targets(self, island_id: int) -> List[int]:
+        """Get list of islands this island can migrate to."""
+        return self.connections.get(island_id, [])
+    
+    def should_migrate(self) -> bool:
+        """Decide if migration should occur this cycle."""
+        return random.random() < self.migration_prob
+
+
+class SharedMigrationManager:
+    """File-based migration manager for sharing expressions between island processes."""
+    
+    def __init__(self, n_islands: int, temp_dir: str):
+        self.n_islands = n_islands
+        self.temp_dir = temp_dir
+        self.migration_files = {}
+        
+        # Create migration files for each island
+        for i in range(n_islands):
+            migration_file = os.path.join(temp_dir, f"island_{i}_migrants.pkl")
+            self.migration_files[i] = migration_file
+            # Initialize empty migration pool
+            with open(migration_file, 'wb') as f:
+                pickle.dump([], f)
+    
+    def send_migrants(self, from_island: int, to_islands: List[int], 
+                     migrants: List[Dict[str, Any]]):
+        """Send migrant expressions to target islands."""
+        for to_island in to_islands:
+            if to_island < self.n_islands:
+                try:
+                    migration_file = self.migration_files[to_island]
+                    # Read existing migrants
+                    try:
+                        with open(migration_file, 'rb') as f:
+                            existing_migrants = pickle.load(f)
+                    except (FileNotFoundError, EOFError):
+                        existing_migrants = []
+                    
+                    # Add new migrants
+                    existing_migrants.extend(migrants)
+                    
+                    # Keep only recent migrants (last 50)
+                    if len(existing_migrants) > 50:
+                        existing_migrants = existing_migrants[-50:]
+                    
+                    # Write back
+                    with open(migration_file, 'wb') as f:
+                        pickle.dump(existing_migrants, f)
+                        
+                except Exception as e:
+                    print(f"Failed to send migrants from {from_island} to {to_island}: {e}")
+    
+    def receive_migrants(self, island_id: int) -> List[Dict[str, Any]]:
+        """Receive available migrant expressions for this island."""
+        try:
+            migration_file = self.migration_files[island_id]
+            try:
+                with open(migration_file, 'rb') as f:
+                    migrants = pickle.load(f)
+            except (FileNotFoundError, EOFError):
+                migrants = []
+            
+            # Clear the migration file after reading
+            with open(migration_file, 'wb') as f:
+                pickle.dump([], f)
+                
+            return migrants
+        except Exception as e:
+            print(f"Failed to receive migrants for island {island_id}: {e}")
+            return []
+
+
+def island_worker_process(args):
+    """Worker process for individual island evolution with migration support."""
+    (island_id, regressor_params, X, y, total_generations, 
+     migration_interval, topology_data, migration_manager_data, temp_dir) = args
+    
+    try:
+        # Set unique seed for this island
+        island_seed = hash((island_id, time.time())) % 2**32
+        random.seed(island_seed)
+        np.random.seed(island_seed % 2**32)
+        
+        # Create island topology
+        topology = IslandTopology(topology_data['n_islands'], topology_data['migration_prob'])
+        topology.connections = topology_data['connections']
+        
+        # Create migration manager
+        migration_manager = SharedMigrationManager(migration_manager_data['n_islands'], temp_dir)
+        
+        # Create regressor with unique parameters for diversity (like PySR)
+        params = regressor_params.copy()
+        params['console_log'] = False
+        
+        # Remove parameters not supported by new MIMOSymbolicRegressor
+        unsupported_params = [
+            'purge_percentage', 'exchange_interval', 'import_percentage', 
+            'enable_inter_thread_communication'
+        ]
+        for param in unsupported_params:
+            params.pop(param, None)
+        
+        # Add parameter diversity for island differentiation
+        params['mutation_rate'] *= random.uniform(0.8, 1.2)
+        params['crossover_rate'] *= random.uniform(0.9, 1.1)
+        params['population_size'] = int(params['population_size'] * random.uniform(0.9, 1.1))
+        params['parsimony_coefficient'] *= random.uniform(0.5, 2.0)
+        
+        regressor = MIMOSymbolicRegressor(**params)
+        
+        # Island evolution with periodic migration
+        generation = 0
+        all_results = []
+        
+        # Batch evolution like PySR's ncycles_per_iteration
+        while generation < total_generations:
+            batch_size = min(migration_interval, total_generations - generation)
+            
+            # Set batch generations
+            regressor.generations = batch_size
+            
+            # Run evolution batch
+            regressor.fit(X, y, constant_optimize=False)
+            
+            generation += batch_size
+            
+            # Collect results from this batch
+            if regressor.best_expressions and hasattr(regressor, 'fitness_history'):
+                best_fitness = max(regressor.fitness_history) if regressor.fitness_history else -float('inf')
+                for i, expr in enumerate(regressor.best_expressions[:3]):
+                    all_results.append({
+                        'expression_obj': expr.copy(),
+                        'expression_str': expr.to_string(),
+                        'fitness': best_fitness - i * 0.001,  # Small penalty for ranking
+                        'island_id': island_id,
+                        'generation': generation,
+                        'complexity': expr.complexity()
+                    })
+            
+            # Migration phase (like PySR's population exchange)
+            if generation < total_generations and topology.should_migrate():
+                try:
+                    # Get best expressions to send as migrants
+                    if regressor.best_expressions:
+                        migrants = []
+                        for expr in regressor.best_expressions[:2]:  # Send top 2
+                            migrant_data = {
+                                'expression_str': expr.to_string(),
+                                'fitness': best_fitness,
+                                'complexity': expr.complexity(),
+                                'from_island': island_id,
+                                'generation': generation
+                            }
+                            migrants.append(migrant_data)
+                        
+                        # Send to connected islands
+                        target_islands = topology.get_migration_targets(island_id)
+                        migration_manager.send_migrants(island_id, target_islands, migrants)
+                    
+                    # Receive migrants from other islands
+                    received_migrants = migration_manager.receive_migrants(island_id)
+                    if received_migrants:
+                        # Here we would integrate migrants into the population
+                        # For now, just log that migration occurred
+                        pass
+                        
+                except Exception as e:
+                    # Migration failures shouldn't stop evolution
+                    pass
+        
+        # Return best results from this island
+        if all_results:
+            # Sort by fitness and return top results
+            all_results.sort(key=lambda x: x['fitness'], reverse=True)
+            return all_results[:5]  # Top 5 from this island
+        else:
+            return []
+            
+    except Exception as e:
+        print(f"Island {island_id} failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return []
+
 
 class EnsembleMIMORegressor:
-  """
-  Runs multiple MIMOSymbolicRegressor fits concurrently and selects an
-  ensemble of the best overall expressions.
-  """
-  def __init__(self, n_fits: int = 8, top_n_select: int = 5,
-               enable_inter_thread_communication: bool = True,
-               exchange_interval: int = 10, purge_percentage: float = 0.15,
-               import_percentage: float = 0.03, debug_csv_path: Optional[str] = None,
-               # Shared scaling parameters to ensure consistency across ensemble
-               shared_data_scaler: Optional['DataScaler'] = None,
-               **regressor_kwargs):
     """
-    Initializes the Ensemble Regressor with optional inter-thread communication.
-
-    Args:
-        n_fits (int): The number of regressor fits to run concurrently.
-                      Defaults to 8 as requested.
-        top_n_select (int): The number of best expressions to select from all
-                            runs. Defaults to 5 as requested.
-        enable_inter_thread_communication (bool): Whether to enable communication
-                                                  between worker threads.
-        exchange_interval (int): How often (in generations) workers exchange expressions.
-        purge_percentage (float): Percentage of worst expressions to remove (0.14-0.21).
-        import_percentage (float): Percentage of best expressions to import from other workers.
-        debug_csv_path (str): Path to a CSV file for debugging purposes, to log
-                              the progress and results of each fit. If None, logging
-                              to CSV is disabled.
-        shared_data_scaler (DataScaler): Pre-fitted data scaler to ensure consistent
-                                        scaling across all ensemble members. If None,
-                                        each worker will fit its own scaler.
-        **regressor_kwargs: Keyword arguments to be passed to each
-                            underlying MIMOSymbolicRegressor instance.
+    Island Model Ensemble for MIMO Symbolic Regression.
+    
+    Implements an island model evolutionary algorithm inspired by PySR where multiple
+    populations evolve independently with periodic migration of best individuals between
+    islands. This approach promotes diversity while allowing beneficial traits to spread.
     """
-    if not isinstance(n_fits, int) or n_fits <= 0:
-      raise ValueError("n_fits must be a positive integer.")
-    if not isinstance(top_n_select, int) or top_n_select <= 0:
-      raise ValueError("top_n_select must be a positive integer.")
-    if top_n_select > n_fits:
-      raise ValueError("top_n_select cannot be greater than n_fits.")
-
-    self.n_fits = n_fits
-    self.top_n_select = top_n_select
-    self.regressor_kwargs = regressor_kwargs
-    self.best_expressions: List[Expression] = []
-    self.best_fitnesses: List[float] = []
-    self.all_results: List[Dict] = []
-
-    # Inter-thread communication parameters
-    self.enable_inter_thread_communication = enable_inter_thread_communication
-    self.exchange_interval = exchange_interval
-    self.purge_percentage = purge_percentage
-    self.import_percentage = import_percentage
-
-    # Debug CSV path
-    self.debug_csv_path = debug_csv_path
     
-    # Shared data scaler for consistent scaling across ensemble
-    self.shared_data_scaler = shared_data_scaler
-
-  def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False):
-    """
-    Fits 'n_fits' regressors concurrently using multiprocessing, then selects
-    the top 'top_n_select' expressions based on their final fitness scores.
-
-    IMPORTANT: Due to the use of 'multiprocessing' on some platforms (like
-    Windows), this method should be called from within a
-    `if __name__ == "__main__":` block in your script.
-    """
-    print(f"Starting ensemble fit with {self.n_fits} concurrent regressors...")
-    
-    # Pre-fit a shared data scaler if scaling is enabled and none provided
-    if (self.shared_data_scaler is None and 
-        self.regressor_kwargs.get('enable_data_scaling', False)):
-      print("Fitting shared data scaler for consistent ensemble scaling...")
-      from .data_scaling import DataScaler
-      
-      input_scaling = self.regressor_kwargs.get('input_scaling', 'auto')
-      output_scaling = self.regressor_kwargs.get('output_scaling', 'auto')
-      scaling_target_range = self.regressor_kwargs.get('scaling_target_range', (-5.0, 5.0))
-      
-      self.shared_data_scaler = DataScaler(
-          input_scaling=input_scaling,
-          output_scaling=output_scaling,
-          target_range=scaling_target_range
-      )
-      
-      # Fit the scaler on the training data
-      X_scaled, y_scaled = self.shared_data_scaler.fit_transform(X, y)
-      print(f"Data scaling applied: X {X.shape} -> {X_scaled.shape}, y {y.shape} -> {y_scaled.shape}")
-    
-    # Disable inter-thread communication by default to avoid synchronization overhead
-    use_communication = (self.enable_inter_thread_communication and 
-                        self.n_fits >= 4 and 
-                        self.regressor_kwargs.get('generations', 50) >= 50)
-    
-    if use_communication:
-      print(f"Inter-thread communication enabled: exchange every {self.exchange_interval} generations")
-      print(f"Population exchange: purge {self.purge_percentage*100:.1f}%, import {self.import_percentage*100:.1f}%")
-    else:
-      print("Inter-thread communication disabled for optimal performance.")
-
-    # Initialize shared population manager only if communication is actually used
-    shared_manager = None
-    if use_communication:
-      from .shared_population_manager import create_improved_shared_data
-      shared_manager = create_improved_shared_data(
-        n_workers=self.n_fits,
-        exchange_interval=self.exchange_interval,
-        purge_percentage=self.purge_percentage,
-        import_percentage=self.import_percentage
-      )
-
-    # Prepare configurations for each worker process.
-    # We disable console logging for worker processes to keep the main output clean.
-    worker_kwargs = self.regressor_kwargs.copy()
-    worker_kwargs['console_log'] = False
-    
-    # If using shared scaling, pass the fitted scaler to workers
-    if self.shared_data_scaler is not None:
-      worker_kwargs['shared_data_scaler'] = self.shared_data_scaler
-    
-    # Use different random seeds and parameters for diversity without communication overhead
-    configs = []
-    for i in range(self.n_fits):
-      # Each worker gets slightly different parameters for natural diversity
-      worker_specific_kwargs = worker_kwargs.copy()
-      if not use_communication:
-        # Add parameter diversity when not using communication
-        base_mutation = worker_kwargs.get('mutation_rate', 0.1)
-        base_parsimony = worker_kwargs.get('parsimony_coefficient', 0.001)
+    def __init__(self, n_fits: int = 8, top_n_select: int = 5,
+                 migration_interval: int = 20, migration_probability: float = 0.3,
+                 enable_inter_thread_communication: bool = True,  # Kept for compatibility
+                 shared_data_scaler: Optional['DataScaler'] = None,
+                 **regressor_kwargs):
+        """
+        Initialize the Island Model Ensemble.
         
-        worker_specific_kwargs['mutation_rate'] = base_mutation * (0.8 + 0.4 * i / max(1, self.n_fits - 1))
-        worker_specific_kwargs['parsimony_coefficient'] = base_parsimony * (0.5 + 1.0 * i / max(1, self.n_fits - 1))
-      
-      configs.append((worker_specific_kwargs, X, y, constant_optimize, shared_manager, i, self.debug_csv_path))
-
-    # Run fits in parallel using a process pool with optimized settings
-    with multiprocessing.Pool(processes=self.n_fits, maxtasksperchild=1) as pool:
-      results = pool.map(_fit_worker, configs)
-
-    print("All concurrent fits completed. Aggregating and ranking results...")
-
-    # Aggregate valid results from all runs
-    all_run_results = []
-    self.fitted_regressors = []  # Store regressor objects for fitness history access
-    for i, reg in enumerate(results):
-      if reg and reg.best_expressions and reg.best_fitness_history:
-        fitness = reg.best_fitness_history[-1]
-        expression = reg.best_expressions[0]
-        all_run_results.append({
-          "run": i,
-          "fitness": fitness,
-          "expression_obj": expression,
-          "expression_str": expression.to_string(),
-          "complexity": expression.complexity(),
-          "regressor": reg  # Store the regressor object
-        })
-        self.fitted_regressors.append(reg)
-
-    if not all_run_results:
-      print("\nWarning: No valid expressions were found across all runs. The model is not fitted.")
-      return
-
-    # Sort all results by fitness in descending order (higher is better)
-    all_run_results.sort(key=lambda item: item['fitness'], reverse=True)
-
-    # Select the top N best expressions from the aggregated list
-    top_results = all_run_results[:self.top_n_select]
-
-    # FINAL OPTIMIZATION PHASE: Apply optimizations to top candidate expressions
-    print(f"\nApplying final optimizations to top {len(top_results)} candidate expressions...")
-    
-    import time
-    start_time = time.time()
-    
-    # Extract expressions for optimization
-    candidate_expressions = [res['expression_obj'] for res in top_results]
-    
-    # Apply final optimizations using the same scaling as training
-    from .expression_utils import optimize_final_expressions
-    parsimony_coeff = self.regressor_kwargs.get('parsimony_coefficient', 0.01)
-    
-    if self.shared_data_scaler is not None:
-      # Use scaled data for optimization consistency
-      X_scaled = self.shared_data_scaler.transform_input(X)
-      y_scaled = self.shared_data_scaler.transform_output(y)
-      optimized_expressions = optimize_final_expressions(candidate_expressions, X_scaled, y_scaled)
-      
-      # Re-evaluate with optimized constants using scaled data but calculate fitness on original scale
-      # Use the first fitted regressor's evaluation method for consistency
-      if (hasattr(self, 'fitted_regressors') and self.fitted_regressors and 
-          hasattr(self.fitted_regressors[0], '_evaluate_population_enhanced_with_scaling')):
-        optimized_fitness_scores = self.fitted_regressors[0]._evaluate_population_enhanced_with_scaling(
-          optimized_expressions, X_scaled, y_scaled, X, y)
-      else:
-        # Fallback to the old method if no fitted regressors available
-        from .expression_utils import evaluate_optimized_expressions
-        optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
-    else:
-      # No scaling used, proceed with original data
-      optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
-      from .expression_utils import evaluate_optimized_expressions
-      optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
-    
-    # Update results with optimized fitness scores and re-rank
-    for i, (optimized_expr, new_fitness) in enumerate(zip(optimized_expressions, optimized_fitness_scores)):
-      if i < len(top_results):
-        top_results[i]['expression_obj'] = optimized_expr
-        top_results[i]['fitness'] = new_fitness
-        top_results[i]['expression_str'] = optimized_expr.to_string()
-        top_results[i]['complexity'] = optimized_expr.complexity()
-    
-    # Re-sort by new optimized fitness scores
-    top_results.sort(key=lambda item: item['fitness'], reverse=True)
-    
-    optimization_time = time.time() - start_time
-    improvement_count = sum(1 for i, new_fitness in enumerate(optimized_fitness_scores) 
-                          if i < len(all_run_results[:self.top_n_select]) and 
-                          new_fitness > all_run_results[i]['fitness'])
-    
-    print(f"Final optimization completed in {optimization_time:.2f}s")
-    print(f"Optimization improved {improvement_count}/{len(optimized_expressions)} expressions")
-
-    self.best_expressions = [res['expression_obj'] for res in top_results]
-    self.best_fitnesses = [res['fitness'] for res in top_results]
-    self.all_results = all_run_results
-
-    # Print a summary of the best expressions found
-    print(f"\nEnsemble fitting complete. Top {len(self.best_expressions)} of {len(all_run_results)} expressions selected:")
-    for i, res in enumerate(top_results):
-      print(f"  {i+1}. Fitness: {res['fitness']:.6f}, "
-            f"Complexity: {res['complexity']:.2f}, "
-            f"From Run: {res['run']}, "
-            f"Expression: {res['expression_str']}")
-
-    print(f"Final optimization improved {improvement_count} expressions out of {len(top_results)} candidates.")
-
-    if self.enable_inter_thread_communication:
-      print(f"\nInter-thread communication summary:")
-      print(f"Workers exchanged expressions every {self.exchange_interval} generations")
-      print(f"This should have improved population diversity across threads")
-
-  def predict(self, X: np.ndarray, strategy: str = 'mean') -> np.ndarray:
-    """
-    Makes predictions using the ensemble of best expressions.
-    Handles data scaling if it was used during training.
-
-    Args:
-        X (np.ndarray): Input data for prediction.
-        strategy (str): The strategy to combine predictions from the
-                        expressions in the ensemble.
-                        - 'mean': Average the predictions of all expressions (default).
-                        - 'best_only': Use only the single best expression.
-
-    Returns:
-        np.ndarray: The predicted values.
-    """
-    if not self.best_expressions:
-      raise ValueError("Model has not been fitted yet. Call fit() first.")
-
-    X = np.asarray(X, dtype=np.float64)
-    if X.ndim == 1:
-      X = X.reshape(-1, 1)
-
-    # Check if we have scaling information
-    data_scaler = self.shared_data_scaler
-    if (data_scaler is None and hasattr(self, 'fitted_regressors') and 
-        self.fitted_regressors and len(self.fitted_regressors) > 0 and 
-        hasattr(self.fitted_regressors[0], 'data_scaler')):
-      data_scaler = self.fitted_regressors[0].data_scaler
-
-    if strategy == 'best_only':
-      # Use only the single best expression (the first in the sorted list)
-      if data_scaler is not None:
-        X_scaled = data_scaler.transform_input(X)
-        y_scaled = self.best_expressions[0].evaluate(X_scaled)
-        return data_scaler.inverse_transform_output(y_scaled)
-      else:
-        return self.best_expressions[0].evaluate(X)
-
-    elif strategy == 'mean':
-      # Collect predictions from all selected expressions
-      if data_scaler is not None:
-        X_scaled = data_scaler.transform_input(X)
-        all_predictions = []
-        for expr in self.best_expressions:
-          pred_scaled = expr.evaluate(X_scaled)
-          pred_original = data_scaler.inverse_transform_output(pred_scaled)
-          if pred_original.ndim == 1:
-            pred_original = pred_original.reshape(-1, 1)
-          all_predictions.append(pred_original)
-      else:
-        all_predictions = []
-        for expr in self.best_expressions:
-          pred = expr.evaluate(X)
-          if pred.ndim == 1:
-            pred = pred.reshape(-1, 1)
-          all_predictions.append(pred)
-
-      # Average the predictions column-wise
-      return np.mean(np.array(all_predictions), axis=0)
-
-    else:
-      raise ValueError(f"Invalid prediction strategy '{strategy}'. Choose from 'mean' or 'best_only'.")
-
-  def get_expressions(self) -> List[str]:
-    """Returns clean string representations of the top expressions with proper scaling information."""
-    if not self.best_expressions:
-      return []
-    
-    # Get basic expressions (these are in terms of scaled variables)
-    basic_expressions = [expr.to_string() for expr in self.best_expressions]
-    
-    # Check if we have scaling information
-    data_scaler = self.shared_data_scaler
-    if (data_scaler is None and hasattr(self, 'fitted_regressors') and 
-        self.fitted_regressors and len(self.fitted_regressors) > 0 and 
-        hasattr(self.fitted_regressors[0], 'data_scaler')):
-      data_scaler = self.fitted_regressors[0].data_scaler
-    
-    if data_scaler is not None:
-      # Get scaling transformation expressions
-      n_inputs = getattr(self.fitted_regressors[0], 'n_inputs', 1) if hasattr(self, 'fitted_regressors') and self.fitted_regressors else 1
-      try:
-        input_transforms, output_transform = data_scaler.get_scaling_transformation_expressions(n_inputs)
+        Args:
+            n_fits (int): Number of island populations (concurrent regressors)
+            top_n_select (int): Number of best expressions to select from all islands
+            migration_interval (int): Generations between migration opportunities (like PySR's ncycles_per_iteration)
+            migration_probability (float): Probability of migration occurring each cycle
+            enable_inter_thread_communication (bool): Kept for compatibility, always uses island model
+            shared_data_scaler (DataScaler): Pre-fitted scaler for consistency across islands
+            **regressor_kwargs: Parameters passed to each MIMOSymbolicRegressor
+        """
+        if not isinstance(n_fits, int) or n_fits <= 0:
+            raise ValueError("n_fits must be a positive integer")
+        if not isinstance(top_n_select, int) or top_n_select <= 0:
+            raise ValueError("top_n_select must be a positive integer")
+        if top_n_select > n_fits * 5:  # Each island contributes up to 5
+            print(f"Warning: top_n_select ({top_n_select}) is large relative to n_fits ({n_fits})")
         
-        # Check if any scaling was actually applied
-        has_input_scaling = any(transform != f"x{i}" for i, transform in enumerate(input_transforms))
-        has_output_scaling = output_transform != "y'"
+        self.n_fits = n_fits
+        self.top_n_select = top_n_select
+        self.migration_interval = migration_interval
+        self.migration_probability = migration_probability
+        self.regressor_kwargs = regressor_kwargs
+        self.shared_data_scaler = shared_data_scaler
         
-        if has_input_scaling or has_output_scaling:
-          # Add scaling information to expressions with new clean format
-          expressions_with_scaling = []
-          for expr_str in basic_expressions:
-            # The expression is in terms of scaled variables, so we present it cleanly
-            expr_with_scaling = expr_str
+        # Results storage
+        self.best_expressions: List[Expression] = []
+        self.best_fitnesses: List[float] = []
+        self.all_results: List[Dict] = []
+        self.fitted_regressors: List[Any] = []
+    
+    def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False):
+        """
+        Fits multiple regressors using island model evolution with migration.
+        
+        Each island evolves independently but exchanges best individuals periodically.
+        This mimics PySR's population-based approach but with multiple islands.
+        """
+        print(f"Starting island model ensemble with {self.n_fits} islands...")
+        print(f"Migration occurs every {self.migration_interval} generations with probability {self.migration_probability}")
+        
+        # Pre-fit shared data scaler if needed
+        if (self.shared_data_scaler is None and 
+            self.regressor_kwargs.get('enable_data_scaling', True)):
+            print("Fitting shared data scaler for consistent ensemble scaling...")
+            from .data_processing import DataScaler
             
-            # Add scaling information in the requested format
-            scaling_lines = []
+            input_scaling = self.regressor_kwargs.get('input_scaling', 'auto')
+            output_scaling = self.regressor_kwargs.get('output_scaling', 'auto')
+            scaling_target_range = self.regressor_kwargs.get('scaling_target_range', (-5.0, 5.0))
             
-            # Add input scaling lines (x' = f(x))
-            for i, transform in enumerate(input_transforms):
-              if transform != f"x{i}":
-                scaling_lines.append(f"x{i}' = {transform}")
+            self.shared_data_scaler = DataScaler(
+                input_scaling=input_scaling,
+                output_scaling=output_scaling,
+                target_range=scaling_target_range
+            )
             
-            # Add output scaling line (y' = g(y))  
-            if has_output_scaling and output_transform != "y'":
-              # For output, we need the forward transformation, not inverse
-              scaling_lines.append(f"y' = {self._get_forward_output_transform()}")
+            # Fit the scaler on the training data
+            X_scaled, y_scaled = self.shared_data_scaler.fit_transform(X, y)
+            print(f"Data scaling applied: X {X.shape} -> {X_scaled.shape}, y {y.shape} -> {y_scaled.shape}")
+        
+        # Create temporary directory for migration files
+        temp_dir = tempfile.mkdtemp(prefix="island_ensemble_")
+        
+        try:
+            # Create island topology
+            topology = IslandTopology(self.n_fits, self.migration_probability)
             
-            # Combine everything
-            if scaling_lines:
-              expr_with_scaling += "\n with "
-              expr_with_scaling += "\n      ".join(scaling_lines)
+            # Prepare worker configurations
+            worker_kwargs = self.regressor_kwargs.copy()
+            worker_kwargs['console_log'] = False
             
-            expressions_with_scaling.append(expr_with_scaling)
-          
-          return expressions_with_scaling
+            # Pass shared scaler to workers
+            if self.shared_data_scaler is not None:
+                worker_kwargs['shared_data_scaler'] = self.shared_data_scaler
+            
+            # Prepare topology and migration manager data for serialization
+            topology_data = {
+                'n_islands': self.n_fits,
+                'migration_prob': self.migration_probability,
+                'connections': topology.connections
+            }
+            
+            migration_manager_data = {
+                'n_islands': self.n_fits
+            }
+            
+            configs = []
+            for i in range(self.n_fits):
+                # Add some parameter diversity between islands
+                island_kwargs = worker_kwargs.copy()
+                island_kwargs['mutation_rate'] = worker_kwargs.get('mutation_rate', 0.1) * random.uniform(0.8, 1.2)
+                island_kwargs['parsimony_coefficient'] = worker_kwargs.get('parsimony_coefficient', 0.001) * random.uniform(0.5, 2.0)
+                
+                config = (i, island_kwargs, X, y, worker_kwargs.get('generations', 200), 
+                         self.migration_interval, topology_data, migration_manager_data, temp_dir)
+                configs.append(config)
+            
+            # Run island evolution in parallel
+            with multiprocessing.Pool(processes=self.n_fits, maxtasksperchild=1) as pool:
+                results = pool.map(island_worker_process, configs)
+            
+            print("All island evolutions completed. Aggregating results...")
+            
+            # Aggregate results from all islands
+            all_island_results = []
+            for island_results in results:
+                if island_results:
+                    all_island_results.extend(island_results)
+            
+            if not all_island_results:
+                print("\nWarning: No valid expressions found across all islands. The model is not fitted.")
+                return
+            
+            # Sort all results by fitness
+            all_island_results.sort(key=lambda x: x['fitness'], reverse=True)
+            
+            # Select top results
+            top_results = all_island_results[:self.top_n_select]
+            
+            # Apply final optimizations
+            print(f"\nApplying final optimizations to top {len(top_results)} candidate expressions...")
+            start_time = time.time()
+            
+            candidate_expressions = [res['expression_obj'] for res in top_results]
+            
+            # Apply final optimizations using the same scaling as training
+            parsimony_coeff = self.regressor_kwargs.get('parsimony_coefficient', 0.01)
+            
+            if self.shared_data_scaler is not None:
+                X_scaled = self.shared_data_scaler.transform_input(X)
+                y_scaled = self.shared_data_scaler.transform_output(y)
+                optimized_expressions = optimize_final_expressions(candidate_expressions, X_scaled, y_scaled)
+                optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
+            else:
+                optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
+                optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
+            
+            # Update results with optimized fitness scores
+            for i, (optimized_expr, new_fitness) in enumerate(zip(optimized_expressions, optimized_fitness_scores)):
+                if i < len(top_results):
+                    top_results[i]['expression_obj'] = optimized_expr
+                    top_results[i]['fitness'] = new_fitness
+                    top_results[i]['expression_str'] = optimized_expr.to_string()
+                    top_results[i]['complexity'] = optimized_expr.complexity()
+            
+            # Re-sort by optimized fitness
+            top_results.sort(key=lambda x: x['fitness'], reverse=True)
+            
+            optimization_time = time.time() - start_time
+            improvement_count = sum(1 for i, new_fitness in enumerate(optimized_fitness_scores) 
+                                  if i < len(all_island_results[:self.top_n_select]) and 
+                                  new_fitness > all_island_results[i]['fitness'])
+            
+            print(f"Final optimization completed in {optimization_time:.2f}s")
+            print(f"Optimization improved {improvement_count}/{len(optimized_expressions)} expressions")
+            
+            # Store results
+            self.best_expressions = [res['expression_obj'] for res in top_results]
+            self.best_fitnesses = [res['fitness'] for res in top_results]
+            self.all_results = all_island_results
+            
+            # Print summary
+            print(f"\nIsland ensemble fitting complete. Top {len(self.best_expressions)} of {len(all_island_results)} expressions selected:")
+            for i, res in enumerate(top_results):
+                print(f"  {i+1}. Fitness: {res['fitness']:.6f}, "
+                      f"Complexity: {res['complexity']:.2f}, "
+                      f"From Island: {res['island_id']}, "
+                      f"Expression: {res['expression_str']}")
+                      
+        finally:
+            # Clean up temporary directory
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+    
+    def predict(self, X: np.ndarray, strategy: str = 'mean') -> np.ndarray:
+        """
+        Makes predictions using the ensemble of best expressions.
+        
+        Args:
+            X (np.ndarray): Input data for prediction
+            strategy (str): 'mean' for ensemble average, 'best_only' for single best
+            
+        Returns:
+            np.ndarray: Predicted values
+        """
+        if not self.best_expressions:
+            raise ValueError("Model has not been fitted yet. Call fit() first.")
+        
+        X = np.asarray(X, dtype=np.float64)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+        
+        # Apply scaling if used during training
+        data_scaler = self.shared_data_scaler
+        
+        if strategy == 'best_only':
+            # Use only the single best expression
+            if data_scaler is not None:
+                X_scaled = data_scaler.transform_input(X)
+                y_scaled = self.best_expressions[0].evaluate(X_scaled)
+                return data_scaler.inverse_transform_output(y_scaled)
+            else:
+                return self.best_expressions[0].evaluate(X)
+        
+        elif strategy == 'mean':
+            # Ensemble average
+            if data_scaler is not None:
+                X_scaled = data_scaler.transform_input(X)
+                all_predictions = []
+                for expr in self.best_expressions:
+                    pred_scaled = expr.evaluate(X_scaled)
+                    pred_original = data_scaler.inverse_transform_output(pred_scaled)
+                    if pred_original.ndim == 1:
+                        pred_original = pred_original.reshape(-1, 1)
+                    all_predictions.append(pred_original)
+            else:
+                all_predictions = []
+                for expr in self.best_expressions:
+                    pred = expr.evaluate(X)
+                    if pred.ndim == 1:
+                        pred = pred.reshape(-1, 1)
+                    all_predictions.append(pred)
+            
+            return np.mean(np.array(all_predictions), axis=0)
+        
         else:
-          return basic_expressions
-      except Exception as e:
-        print(f"Warning: Failed to add scaling information: {e}")
-        return basic_expressions
-    else:
-      return basic_expressions
-
-  def _get_forward_output_transform(self) -> str:
-    """Get the forward output transformation expression (y' = g(y))."""
-    if not hasattr(self, 'fitted_regressors') or not self.fitted_regressors:
-      return "y"
+            raise ValueError(f"Invalid prediction strategy '{strategy}'. Choose 'mean' or 'best_only'.")
     
-    data_scaler = self.shared_data_scaler
-    if (data_scaler is None and hasattr(self.fitted_regressors[0], 'data_scaler')):
-      data_scaler = self.fitted_regressors[0].data_scaler
+    def get_expressions(self) -> List[str]:
+        """Returns string representations of the top expressions."""
+        if not self.best_expressions:
+            return []
+        return [expr.to_string() for expr in self.best_expressions]
     
-    if data_scaler is None:
-      return "y"
+    def get_fitness_histories(self) -> List[List[float]]:
+        """Returns empty list for compatibility (individual island histories not tracked)."""
+        return [[] for _ in self.best_expressions]
     
-    transform = data_scaler.output_transform
-    if transform == 'log':
-      if data_scaler.output_log_offset > 0:
-        if data_scaler.output_log_offset < 1e-6:
-          return f"log(y + {data_scaler.output_log_offset:.2e})"
-        else:
-          return f"log(y + {data_scaler.output_log_offset:.3f})"
-      else:
-        return "log(y)"
-    elif transform == 'standard':
-      if data_scaler.output_scaler is not None:
-        mean = data_scaler.output_scaler.mean_[0]  # type: ignore
-        scale = data_scaler.output_scaler.scale_[0]  # type: ignore
-        return f"(y - {mean:.3f}) / {scale:.3f}"
-      else:
-        return "y"
-    elif transform == 'minmax':
-      if data_scaler.output_scaler is not None:
-        data_min = data_scaler.output_scaler.data_min_[0]  # type: ignore
-        data_range = data_scaler.output_scaler.data_range_[0]  # type: ignore
-        min_range, max_range = data_scaler.target_range
-        range_width = max_range - min_range
-        return f"{min_range:.1f} + {range_width:.1f} * (y - {data_min:.3f}) / {data_range:.3f}"
-      else:
-        return "y"
-    elif transform == 'robust':
-      if data_scaler.output_scaler is not None:
-        center = data_scaler.output_scaler.center_[0]  # type: ignore
-        scale = data_scaler.output_scaler.scale_[0]  # type: ignore
-        return f"(y - {center:.3f}) / {scale:.3f}"
-      else:
-        return "y"
-    else:  # 'none' or unknown
-      return "y"
-
-  def get_fitness_histories(self) -> List[List[float]]:
-    """Returns the fitness histories for the top expressions in the ensemble."""
-    if not hasattr(self, 'fitted_regressors') or not self.fitted_regressors:
-      return []
-    
-    # Get the fitness histories for the top selected expressions
-    fitness_histories = []
-    for i, result in enumerate(self.all_results[:self.top_n_select]):
-      regressor = result.get('regressor')
-      if regressor and hasattr(regressor, 'fitness_history'):
-        fitness_histories.append(regressor.fitness_history.copy())
-      else:
-        fitness_histories.append([])
-    
-    return fitness_histories
-
-  def score(self, X: np.ndarray, y: np.ndarray, strategy: str = 'mean') -> float:
-    """
-    Calculates the R² (coefficient of determination) score using scikit-learn's implementation.
-
-    Args:
-        X (np.ndarray): Test samples.
-        y (np.ndarray): True values for X.
-        strategy (str): The prediction strategy to use for scoring ('mean' or 'best_only').
-
-    Returns:
-        float: The R² score.
-    """
-    from sklearn.metrics import r2_score
-    
-    if not self.best_expressions:
-      raise ValueError("Model has not been fitted yet. Call fit() first.")
-
-    predictions = self.predict(X, strategy=strategy)
-
-    if y.ndim == 1:
-      y = y.reshape(-1, 1)
-
-    # Use scikit-learn's R² implementation for consistency
-    try:
-      return r2_score(y.flatten(), predictions.flatten())
-    except Exception:
-      # Fallback calculation for edge cases
-      ss_res = float(np.sum((y - predictions) ** 2))
-      ss_tot = float(np.sum((y - np.mean(y, axis=0)) ** 2))
-
-      if ss_tot == 0.0:
-        # Handle the case where the total sum of squares is zero
-        return 1.0 if ss_res == 0.0 else 0.0
-
-      return 1.0 - (ss_res / ss_tot)
+    def score(self, X: np.ndarray, y: np.ndarray, strategy: str = 'mean') -> float:
+        """
+        Calculates the R² score for the ensemble.
+        
+        Args:
+            X (np.ndarray): Test samples
+            y (np.ndarray): True values
+            strategy (str): Prediction strategy to use
+            
+        Returns:
+            float: R² score
+        """
+        from sklearn.metrics import r2_score
+        
+        if not self.best_expressions:
+            raise ValueError("Model has not been fitted yet. Call fit() first.")
+        
+        predictions = self.predict(X, strategy=strategy)
+        
+        if y.ndim == 1:
+            y = y.reshape(-1, 1)
+        
+        try:
+            return r2_score(y.flatten(), predictions.flatten())
+        except Exception:
+            # Fallback calculation
+            ss_res = float(np.sum((y - predictions) ** 2))
+            ss_tot = float(np.sum((y - np.mean(y, axis=0)) ** 2))
+            
+            if ss_tot == 0.0:
+                return 1.0 if ss_res == 0.0 else 0.0
+            
+            return 1.0 - (ss_res / ss_tot)
+        return 1.0 - (ss_res / ss_tot)

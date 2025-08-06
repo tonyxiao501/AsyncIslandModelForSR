@@ -3,11 +3,6 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
 import os
 from datetime import datetime
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.metrics import r2_score
-import os
-from datetime import datetime
 from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- Use the ensemble version
 from symbolic_regression.logging_system import configure_logging, LogLevel
 
@@ -56,10 +51,6 @@ def main():
     adaptive_rates=True,
     restart_threshold=15,        
     elite_fraction=0.12,
-    enable_inter_thread_communication=True,
-    purge_percentage=0.15,       
-    exchange_interval=15,       
-    import_percentage=0.08,
     enable_data_scaling=False,
     use_multi_scale_fitness=False,
     # Early termination and late extension parameters
