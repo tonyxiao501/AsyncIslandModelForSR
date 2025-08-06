@@ -3,7 +3,13 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
 import os
 from datetime import datetime
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import r2_score
+import os
+from datetime import datetime
 from symbolic_regression.ensemble_regressor import EnsembleMIMORegressor  # <-- Use the ensemble version
+from symbolic_regression.logging_system import configure_logging, LogLevel
 
 
 def generate_complex_function(X):
