@@ -126,7 +126,7 @@ def main():
 
   # Create output directory with current date and time
   timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-  output_dir = os.path.join("..", f"{timestamp}_fit_result")
+  output_dir = f"{timestamp}_fit_result"
   if not os.path.exists(output_dir):
     os.makedirs(output_dir)
   print(f"\nSaving plots to directory: {output_dir}")
