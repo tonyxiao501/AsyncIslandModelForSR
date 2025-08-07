@@ -60,7 +60,11 @@ def main():
     early_termination_check_interval=10,  # Check every 10 generations
     enable_late_extension=True,
     late_extension_threshold=0.95,        # Extend if R² < 0.95 at the end
-    late_extension_generations=50         # Add 50 more generations if needed
+    late_extension_generations=50,        # Add 50 more generations if needed
+    # NEW: Enable asynchronous migration system
+    use_asynchronous_migration=True,      # Use the new asynchronous island-specific cache system
+    migration_interval=20,               # Average generations between migration events
+    migration_probability=0.3            # Probability of migration per cycle
   )
 
   print("\nTraining symbolic regression ensemble model...")
