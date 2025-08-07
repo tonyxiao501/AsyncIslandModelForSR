@@ -6,6 +6,7 @@ Evolution logic has been moved to evolution.py for better organization.
 import numpy as np
 import os
 import time
+import warnings
 from typing import List, Optional, Dict, Any, Tuple
 from sklearn.metrics import r2_score
 
@@ -42,12 +43,6 @@ class MIMOSymbolicRegressor:
                  evolution_sympy_simplify: bool = False,  # Disabled during evolution
                  evolution_constant_optimize: bool = False,  # Disabled during evolution
                  final_optimization_generations: int = 5,  # Apply optimization in final N generations
-                 # Data scaling parameters
-                 enable_data_scaling: bool = True,
-                 input_scaling: str = 'auto',
-                 output_scaling: str = 'auto',
-                 scaling_target_range: Tuple[float, float] = (-5.0, 5.0),  # Expanded range for extreme physics scales
-                 shared_data_scaler: Optional[DataScaler] = None,  # Pre-fitted scaler for ensemble consistency
                  # Multi-scale fitness evaluation
                  use_multi_scale_fitness: bool = True,
                  extreme_value_threshold: float = 1e6,
@@ -83,12 +78,8 @@ class MIMOSymbolicRegressor:
         self.restart_threshold = restart_threshold
         self.elite_fraction = elite_fraction
 
-        # Data scaling parameters
-        self.enable_data_scaling = enable_data_scaling
-        self.input_scaling = input_scaling
-        self.output_scaling = output_scaling
-        self.scaling_target_range = scaling_target_range
-        self.data_scaler: Optional[DataScaler] = shared_data_scaler  # Use shared scaler if provided
+        # REMOVED: All data scaling functionality (deprecated)
+        # Now works with raw data only for better physical interpretability
 
         # Multi-scale fitness evaluation
         self.use_multi_scale_fitness = use_multi_scale_fitness
@@ -166,28 +157,8 @@ class MIMOSymbolicRegressor:
         if y.ndim == 1:
             y = y.reshape(-1, 1)
 
-        # Apply data scaling if enabled
+        # Work with raw data (no scaling)
         X_scaled, y_scaled = X.copy(), y.copy()
-        if self.enable_data_scaling:
-            if self.data_scaler is None:
-                # Create new data scaler if none provided
-                self.data_scaler = DataScaler(
-                    input_scaling=self.input_scaling,
-                    output_scaling=self.output_scaling,
-                    target_range=self.scaling_target_range
-                )
-                X_scaled, y_scaled = self.data_scaler.fit_transform(X, y)
-            else:
-                # Use pre-fitted shared data scaler (for ensemble consistency)
-                X_scaled = self.data_scaler.transform_input(X)
-                y_scaled = self.data_scaler.transform_output(y) if hasattr(self.data_scaler, 'transform_output') else y.copy()
-            
-            if self.console_log:
-                scaling_info = self.data_scaler.get_scaling_info()
-                print(f"Data scaling applied:")
-                print(f"  Input transforms: {scaling_info['input_transforms']}")
-                print(f"  Output transform: {scaling_info['output_transform']}")
-                print(f"  Target range: {scaling_info['target_range']}")
 
         self.n_inputs = X_scaled.shape[1]
         self.n_outputs = y_scaled.shape[1]
@@ -217,8 +188,7 @@ class MIMOSymbolicRegressor:
         if self.console_log:
             print(f"Starting evolution with {self.n_inputs} inputs and {self.n_outputs} outputs")
             print(f"Population size: {self.population_size}, Generations: {self.generations}")
-            if self.enable_data_scaling:
-                print(f"Data scaling: Input={self.input_scaling}, Output={self.output_scaling}")
+            print("Using raw data without scaling for better physical interpretability")
 
         # Run evolution using the evolution engine
         self.best_expressions = self.evolution_engine.run_evolution(
@@ -236,10 +206,8 @@ class MIMOSymbolicRegressor:
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        # Apply input scaling if enabled
+        # Use raw data (no scaling)
         X_scaled = X.copy()
-        if self.enable_data_scaling and self.data_scaler is not None:
-            X_scaled = self.data_scaler.transform_input(X)
 
         predictions = []
         for expr in self.best_expressions:
@@ -264,11 +232,7 @@ class MIMOSymbolicRegressor:
             # For multiple expressions, concatenate along output dimension
             result = np.hstack(predictions)
 
-        # Apply output inverse scaling if enabled
-        if self.enable_data_scaling and self.data_scaler is not None:
-            if hasattr(self.data_scaler, 'inverse_transform_output'):
-                result = self.data_scaler.inverse_transform_output(result)
-
+        # Return raw predictions (no inverse scaling)
         return result
 
     def score(self, X: np.ndarray, y: np.ndarray) -> float:

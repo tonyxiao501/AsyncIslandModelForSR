@@ -359,14 +359,8 @@ class EvolutionEngine:
         
         for expr in population:
             try:
-                # Evaluate on scaled data
-                predictions_scaled = expr.evaluate(X_scaled)
-                
-                # Transform predictions back to original scale if scaler available
-                if self.regressor.data_scaler is not None:
-                    predictions_original = self.regressor.data_scaler.inverse_transform_output(predictions_scaled)
-                else:
-                    predictions_original = predictions_scaled
+                # Evaluate on data (no scaling transformations)
+                predictions_original = expr.evaluate(X_scaled)
                 
                 # Use multi-scale fitness evaluator if available
                 if self.regressor.fitness_evaluator is not None:

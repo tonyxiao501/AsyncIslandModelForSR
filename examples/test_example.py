@@ -104,22 +104,14 @@ def main():
   individual_r2_scores = []
   
   for expr in model.best_expressions[:5]:  # Get top 5 expressions
-    # Get the data scaler from the model
-    data_scaler = model.shared_data_scaler
-    if data_scaler is not None:
-      # Transform test data and evaluate expression, then inverse transform
-      X_test_scaled = data_scaler.transform_input(X_test)
-      pred_scaled = expr.evaluate(X_test_scaled)
-      pred = data_scaler.inverse_transform_output(pred_scaled)
-    else:
-      # No scaling was used
-      pred = expr.evaluate(X_test)
+    # Evaluate expression directly on raw data (no scaling)
+    pred = expr.evaluate(X_test)
     
     if pred.ndim == 1:
       pred = pred.reshape(-1, 1)
     individual_predictions.append(pred.flatten())
     
-    # Calculate R² for this individual expression (on original scale)
+    # Calculate R² for this individual expression
     r2_individual = r2_score(y_true_test, pred.flatten())
     individual_r2_scores.append(r2_individual)
 

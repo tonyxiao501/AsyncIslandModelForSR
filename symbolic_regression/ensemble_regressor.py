@@ -141,7 +141,9 @@ def island_worker_process(args):
         # Remove parameters not supported by new MIMOSymbolicRegressor
         unsupported_params = [
             'purge_percentage', 'exchange_interval', 'import_percentage', 
-            'enable_inter_thread_communication'
+            'enable_inter_thread_communication',
+            # Scaling-related parameters (removed from system)
+            'enable_data_scaling', 'use_multi_scale_fitness'
         ]
         for param in unsupported_params:
             params.pop(param, None)

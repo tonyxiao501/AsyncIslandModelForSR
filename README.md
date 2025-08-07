@@ -4,12 +4,24 @@ A comprehensive genetic programming approach to symbolic regression for Multiple
 
 ---
 
+## ⚠️ Important Notice: Data Scaling Deprecation
+
+**Data scaling functionality is deprecated as of version 2.0 and will be removed in version 3.0.**
+
+Based on research of leading symbolic regression libraries (PySR, GPLearn), we found that aggressive data scaling destroys physical meaning in discovered expressions. The library now recommends working with raw data for better interpretability and physically meaningful results.
+
+📖 **See [SCALING_DEPRECATION.md](SCALING_DEPRECATION.md) for detailed migration guide and rationale.**
+
+---
+
 ## Features
 
 - **Multiple Input Multiple Output (MIMO) Symbolic Regression**
+- **Physics-Aware**: Works with raw data to preserve physical meaning
 - **Modular Architecture** with separated components for easy extension and maintenance
 - **Advanced Expression Tree System** with optimization and validation utilities
 - **Genetic Programming** with sophisticated evolution dynamics
+- **Multi-Scale Fitness Evaluation** for handling extreme values without scaling
 - **Diversity Preservation** and adaptive mutation/crossover rates
 - **Population Management** with restart and elite preservation strategies
 - **Ensemble Modeling**: Run multiple regressors in parallel and aggregate results
@@ -39,27 +51,36 @@ pip install -r requirements.txt
 ```python
 import numpy as np
 from symbolic_regression import MIMOSymbolicRegressor
+from symbolic_regression.data_processing import prepare_physics_data
 
-# Generate synthetic data
-X = np.random.rand(100, 3)
-y = X[:, 0]**2 + np.sin(X[:, 1]) + X[:, 2]
+# Generate synthetic physics data (e.g., F = ma)
+m = np.random.uniform(0.1, 10.0, 100)    # mass (kg)
+a = np.random.uniform(0.5, 20.0, 100)   # acceleration (m/s²)
+F = m * a  # force (N) - true relationship
 
-# Create and train the regressor
+X = np.column_stack([m, a])
+
+# Optional: minimal preprocessing (preserves physical meaning)
+X_clean, y_clean = prepare_physics_data(X, F, remove_outliers=True)
+
+# Create and train the regressor (no scaling - preserves physics)
 regressor = MIMOSymbolicRegressor(
     population_size=100,
     generations=50,
     mutation_rate=0.1,
     crossover_rate=0.8,
-    max_depth=6
+    max_depth=6,
+    enable_data_scaling=False,        # RECOMMENDED: Use raw data
+    use_multi_scale_fitness=True      # Better for extreme values
 )
 
 # Fit the model
-regressor.fit(X, y)
+regressor.fit(X_clean, y_clean)
 
 # Make predictions
-predictions = regressor.predict(X)
+predictions = regressor.predict(X_clean)
 
-# Get the best expression
+# Get the best expression (should discover F = X0 * X1)
 best_expr = regressor.get_best_expression()
 print(f"Best expression: {best_expr.to_string()}")
 ```
