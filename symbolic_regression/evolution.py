@@ -171,10 +171,7 @@ class EvolutionEngine:
         # Main evolution loop - EXACT COPY from working version
         for generation in range(self.regressor.generations):
             # Evaluate population
-            if self.regressor.use_multi_scale_fitness and self.regressor.fitness_evaluator:
-                fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled, X_original, y_original)
-            else:
-                fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
+            fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
 
             # Track best fitness
             generation_best_fitness = max(fitness_scores)
@@ -257,10 +254,7 @@ class EvolutionEngine:
                     )
                     
                     # Re-evaluate after injection
-                    if self.regressor.use_multi_scale_fitness and self.regressor.fitness_evaluator:
-                        fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled, X_original, y_original)
-                    else:
-                        fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
+                    fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
 
             # Adaptive parameter adjustment
             if self.regressor.adaptive_rates:
@@ -309,10 +303,7 @@ class EvolutionEngine:
                 )
 
         # Final evaluation and return best expressions
-        if self.regressor.use_multi_scale_fitness and self.regressor.fitness_evaluator:
-            final_fitness_scores = self._evaluate_population_multi_scale(population, X_scaled, y_scaled, X_original, y_original)
-        else:
-            final_fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
+        final_fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
 
         # Find final best expression
         final_best_fitness = max(final_fitness_scores)
@@ -348,38 +339,6 @@ class EvolutionEngine:
             except Exception as e:
                 fitness_scores.append(-10.0)  # Large negative R² score for invalid expressions
                 log_debug(f"Expression evaluation failed: {e}")  # Only log in debug mode
-        
-        return fitness_scores
-
-    def _evaluate_population_multi_scale(self, population: List[Expression], 
-                                       X_scaled: np.ndarray, y_scaled: np.ndarray,
-                                       X_original: np.ndarray, y_original: np.ndarray) -> List[float]:
-        """Evaluate population using multi-scale fitness evaluation"""
-        fitness_scores = []
-        
-        for expr in population:
-            try:
-                # Evaluate on data (no scaling transformations)
-                predictions_original = expr.evaluate(X_scaled)
-                
-                # Use multi-scale fitness evaluator if available
-                if self.regressor.fitness_evaluator is not None:
-                    fitness = self.regressor.fitness_evaluator.evaluate_fitness(
-                        y_original, predictions_original, expr.complexity(), self.regressor.parsimony_coefficient
-                    )
-                else:
-                    # Fallback to standard R² calculation
-                    from sklearn.metrics import r2_score
-                    r2 = r2_score(y_original.flatten(), predictions_original.flatten())
-                    complexity_penalty = self.regressor.parsimony_coefficient * expr.complexity()
-                    fitness = r2 - complexity_penalty
-                
-                fitness_scores.append(fitness)
-                
-            except Exception as e:
-                fitness_scores.append(-10.0)  # Large negative fitness for invalid expressions
-                if self.console_log and len(fitness_scores) <= 5:  # Only log first few failures
-                    print(f"Expression evaluation failed: {e}")
         
         return fitness_scores
 

@@ -4,6 +4,7 @@ Island Model Ensemble for MIMO Symbolic Regression
 This module implements a PySR-inspired island model where multiple populations
 evolve independently with periodic migration of best individuals between islands.
 The approach promotes diversity while allowing beneficial traits to spread across islands.
+Includes PySR-style adaptive parsimony coefficients and domain-specific operator weighting.
 """
 import numpy as np
 import time
@@ -243,10 +244,11 @@ class EnsembleMIMORegressor:
     def __init__(self, n_fits: int = 8, top_n_select: int = 5,
                  migration_interval: int = 20, migration_probability: float = 0.3,
                  enable_inter_thread_communication: bool = True,  # Kept for compatibility
-                 shared_data_scaler: Optional['DataScaler'] = None,
+                 enable_adaptive_parsimony: bool = True,  # Enable PySR-style adaptive parsimony
+                 domain_type: str = "general",  # Domain-specific operator weighting
                  **regressor_kwargs):
         """
-        Initialize the Island Model Ensemble.
+        Initialize the Island Model Ensemble with PySR-style adaptive parsimony.
         
         Args:
             n_fits (int): Number of island populations (concurrent regressors)
@@ -254,7 +256,8 @@ class EnsembleMIMORegressor:
             migration_interval (int): Generations between migration opportunities (like PySR's ncycles_per_iteration)
             migration_probability (float): Probability of migration occurring each cycle
             enable_inter_thread_communication (bool): Kept for compatibility, always uses island model
-            shared_data_scaler (DataScaler): Pre-fitted scaler for consistency across islands
+            enable_adaptive_parsimony (bool): Enable PySR-style adaptive parsimony coefficient
+            domain_type (str): Domain for operator weighting ("physics", "engineering", "biology", "finance", "general")
             **regressor_kwargs: Parameters passed to each MIMOSymbolicRegressor
         """
         if not isinstance(n_fits, int) or n_fits <= 0:
@@ -268,8 +271,17 @@ class EnsembleMIMORegressor:
         self.top_n_select = top_n_select
         self.migration_interval = migration_interval
         self.migration_probability = migration_probability
+        self.enable_adaptive_parsimony = enable_adaptive_parsimony
+        self.domain_type = domain_type
         self.regressor_kwargs = regressor_kwargs
-        self.shared_data_scaler = shared_data_scaler
+        
+        # Initialize adaptive parsimony system
+        if self.enable_adaptive_parsimony:
+            from .adaptive_parsimony import AdaptiveParsimonySystem
+            base_coeff = regressor_kwargs.get('parsimony_coefficient', 0.003)
+            self.parsimony_system = AdaptiveParsimonySystem(base_coeff, domain_type)
+        else:
+            self.parsimony_system = None
         
         # Results storage
         self.best_expressions: List[Expression] = []
@@ -287,26 +299,6 @@ class EnsembleMIMORegressor:
         print(f"Starting island model ensemble with {self.n_fits} islands...")
         print(f"Migration occurs every {self.migration_interval} generations with probability {self.migration_probability}")
         
-        # Pre-fit shared data scaler if needed
-        if (self.shared_data_scaler is None and 
-            self.regressor_kwargs.get('enable_data_scaling', True)):
-            print("Fitting shared data scaler for consistent ensemble scaling...")
-            from .data_processing import DataScaler
-            
-            input_scaling = self.regressor_kwargs.get('input_scaling', 'auto')
-            output_scaling = self.regressor_kwargs.get('output_scaling', 'auto')
-            scaling_target_range = self.regressor_kwargs.get('scaling_target_range', (-5.0, 5.0))
-            
-            self.shared_data_scaler = DataScaler(
-                input_scaling=input_scaling,
-                output_scaling=output_scaling,
-                target_range=scaling_target_range
-            )
-            
-            # Fit the scaler on the training data
-            X_scaled, y_scaled = self.shared_data_scaler.fit_transform(X, y)
-            print(f"Data scaling applied: X {X.shape} -> {X_scaled.shape}, y {y.shape} -> {y_scaled.shape}")
-        
         # Create temporary directory for migration files
         temp_dir = tempfile.mkdtemp(prefix="island_ensemble_")
         
@@ -317,10 +309,6 @@ class EnsembleMIMORegressor:
             # Prepare worker configurations
             worker_kwargs = self.regressor_kwargs.copy()
             worker_kwargs['console_log'] = False
-            
-            # Pass shared scaler to workers
-            if self.shared_data_scaler is not None:
-                worker_kwargs['shared_data_scaler'] = self.shared_data_scaler
             
             # Prepare topology and migration manager data for serialization
             topology_data = {
@@ -372,17 +360,11 @@ class EnsembleMIMORegressor:
             
             candidate_expressions = [res['expression_obj'] for res in top_results]
             
-            # Apply final optimizations using the same scaling as training
+            # Apply final optimizations using raw data (no scaling)
             parsimony_coeff = self.regressor_kwargs.get('parsimony_coefficient', 0.01)
             
-            if self.shared_data_scaler is not None:
-                X_scaled = self.shared_data_scaler.transform_input(X)
-                y_scaled = self.shared_data_scaler.transform_output(y)
-                optimized_expressions = optimize_final_expressions(candidate_expressions, X_scaled, y_scaled)
-                optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
-            else:
-                optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
-                optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
+            optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
+            optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
             
             # Update results with optimized fitness scores
             for i, (optimized_expr, new_fitness) in enumerate(zip(optimized_expressions, optimized_fitness_scores)):
@@ -442,36 +424,20 @@ class EnsembleMIMORegressor:
         if X.ndim == 1:
             X = X.reshape(-1, 1)
         
-        # Apply scaling if used during training
-        data_scaler = self.shared_data_scaler
+        # Work with raw data (no scaling)
         
         if strategy == 'best_only':
             # Use only the single best expression
-            if data_scaler is not None:
-                X_scaled = data_scaler.transform_input(X)
-                y_scaled = self.best_expressions[0].evaluate(X_scaled)
-                return data_scaler.inverse_transform_output(y_scaled)
-            else:
-                return self.best_expressions[0].evaluate(X)
+            return self.best_expressions[0].evaluate(X)
         
         elif strategy == 'mean':
-            # Ensemble average
-            if data_scaler is not None:
-                X_scaled = data_scaler.transform_input(X)
-                all_predictions = []
-                for expr in self.best_expressions:
-                    pred_scaled = expr.evaluate(X_scaled)
-                    pred_original = data_scaler.inverse_transform_output(pred_scaled)
-                    if pred_original.ndim == 1:
-                        pred_original = pred_original.reshape(-1, 1)
-                    all_predictions.append(pred_original)
-            else:
-                all_predictions = []
-                for expr in self.best_expressions:
-                    pred = expr.evaluate(X)
-                    if pred.ndim == 1:
-                        pred = pred.reshape(-1, 1)
-                    all_predictions.append(pred)
+            # Ensemble average (no scaling)
+            all_predictions = []
+            for expr in self.best_expressions:
+                pred = expr.evaluate(X)
+                if pred.ndim == 1:
+                    pred = pred.reshape(-1, 1)
+                all_predictions.append(pred)
             
             return np.mean(np.array(all_predictions), axis=0)
         

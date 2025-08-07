@@ -9,43 +9,43 @@ from .operators import (
 )
 from ..optimization.memory_pool import get_global_pool
 
-# Define complexity weights for different operations
+# Optimized complexity weights based on research and physics applications
 COMPLEXITY_WEIGHTS: Dict[str, float] = {
-  # Binary operations
+  # Binary operations - balanced for physics applications
   '+': 1.0,
   '-': 1.0,
-  '*': 1.2,
-  '/': 1.8,  # Division is more complex due to potential divide-by-zero
-  '^': 2.5,  # Power operations are very complex
+  '*': 1.1,  # Slightly more expensive than addition
+  '/': 1.5,  # Reduced - division is common in physics
+  '^': 2.0,  # Reduced - power laws are important in physics
 
-  # Basic unary operations
-  'sin': 1.3,
-  'cos': 1.3,
-  'tan': 1.4,  # Slightly more complex due to singularities
-  'sqrt': 1.4,
-  'log': 2.0,  # Logarithm can be unstable
-  'exp': 2.2,  # Exponential can explode quickly
-  'abs': 1.1,  # Simple operation
-  'neg': 1.0,  # Unary minus
+  # Core transcendental functions - essential for physics
+  'sin': 1.2,  # Reduced - very common in physics
+  'cos': 1.2,  # Reduced - very common in physics
+  'tan': 1.6,  # Increased due to singularities
+  'exp': 1.8,  # Reduced - common in physics (decay, growth)
+  'log': 1.6,  # Reduced - common in physics (scaling laws)
+  'sqrt': 1.2, # Reduced - very common in physics
+  'abs': 1.05, # Reduced - simple operation
+  'neg': 1.0,  # Unary minus - trivial
   
-  # Unary operation, but takes new members 
-  'scale': 2.0, # TODO: THIS WEIGHT.
+  # Scaling operation
+  'scale': 2.2, # Increased - this shouldn't dominate basic expressions
   
   # Power-related operations
-  'square': 1.1,
-  'cube': 1.2,
-  'cbrt': 1.4,  # Cube root
-  'fourth_root': 1.5,
+  'square': 1.0,  # Very common, should be cheap
+  'cube': 1.5,    # More expensive - less common
+  'cbrt': 4.0,    # VERY expensive - should rarely be used for simple functions
+  'fourth_root': 4.5,
   
-  # Reciprocal operations (critical for physics)
-  'reciprocal': 1.6,  # 1/x
-  'inv_square': 1.8,  # 1/x^2 - important but complex
+  # Physics-critical operations
+  'reciprocal': 1.3,  # Reduced - very common in physics (1/r, 1/t, etc.)
+  'inv_square': 1.5,  # Reduced - common (inverse square law)
   
-  # Safe variants
-  'sqrt_abs': 1.3,  # sqrt(|x|)
-  'log_abs': 1.9,   # log(|x|)
+  # Safe variants - slight penalty for redundancy
+  'sqrt_abs': 1.3,
+  'log_abs': 1.7,
   
-  # Hyperbolic functions
+  # Hyperbolic functions - less common
   'sinh': 1.5,
   'cosh': 1.5,
   'tanh': 1.4,  # Bounded, so slightly simpler
@@ -55,32 +55,38 @@ COMPLEXITY_WEIGHTS: Dict[str, float] = {
   'constant': 1.0,
 }
 
-# Penalty multipliers for dangerous combinations
+# Reduced penalty multipliers for dangerous combinations (additive approach)
 COMBINATION_PENALTIES: Dict[tuple, float] = {
-  # Nested transcendental functions
-  ('sin', 'sin'): 2.0,
-  ('cos', 'cos'): 2.0,
-  ('sin', 'cos'): 1.5,
-  ('cos', 'sin'): 1.5,
+  # Nested transcendental functions - smaller penalties
+  ('sin', 'sin'): 0.3,
+  ('cos', 'cos'): 0.3,
+  ('sin', 'cos'): 0.2,
+  ('cos', 'sin'): 0.2,
 
-  # Exponential/logarithm combinations
-  ('exp', 'log'): 3.0,  # exp(log(x)) = x, but numerically unstable
-  ('log', 'exp'): 3.0,  # log(exp(x)) = x, but can overflow
-  ('exp', 'exp'): 4.0,  # Nested exponentials are very dangerous
-  ('log', 'log'): 3.0,  # Nested logs can be unstable
+  # Exponential/logarithm combinations - moderate penalties
+  ('exp', 'log'): 0.5,  # exp(log(x)) = x, but numerically unstable
+  ('log', 'exp'): 0.5,  # log(exp(x)) = x, but can overflow
+  ('exp', 'exp'): 0.8,  # Nested exponentials are dangerous
+  ('log', 'log'): 0.5,  # Nested logs can be unstable
 
-  # Power combinations
-  ('^', '^'): 3.5,  # x^(y^z) grows extremely fast
-  ('^', 'exp'): 4.0,  # x^exp(y) is explosive
-  ('exp', '^'): 4.0,  # exp(x^y) is explosive
+  # Power combinations - moderate penalties
+  ('^', '^'): 0.6,  # x^(y^z) grows extremely fast
+  ('^', 'exp'): 0.8,  # x^exp(y) is explosive
+  ('exp', '^'): 0.8,  # exp(x^y) is explosive
 
-  # Division chains
-  ('/', '/'): 2.0,  # Nested divisions can amplify errors
-  ('/', '^'): 2.5,  # Division with powers
-  ('^', '/'): 2.5,
+  # Division chains - small penalties
+  ('/', '/'): 0.3,  # Nested divisions can amplify errors
+  ('/', '^'): 0.4,  # Division with powers
+  ('^', '/'): 0.4,
   
-  # Scaling chians:
-  ('scale', 'scale'): 3.0 # They would cancel out.
+  # Root operations with trigonometric functions - discourage exotic combinations
+  ('cbrt', 'sin'): 0.8,  # cbrt(sin(x)) is usually unnecessary
+  ('cbrt', 'cos'): 0.8,  # cbrt(cos(x)) is usually unnecessary  
+  ('cbrt', '*'): 0.5,    # cbrt of products often overcomplicates
+  ('cbrt', '+'): 0.5,    # cbrt of sums often overcomplicates
+  
+  # Scaling chains - small penalty
+  ('scale', 'scale'): 0.4  # Nested scaling operations
 }
 
 
@@ -255,26 +261,27 @@ class BinaryOpNode(Node):
     return 1 + self.left.size() + self.right.size()
 
   def _compute_complexity(self) -> float:
+    """PySR-style complexity calculation with additive penalties"""
     base_complexity = COMPLEXITY_WEIGHTS.get(self.operator, 1.0)
     left_complexity = self.left.complexity()
     right_complexity = self.right.complexity()
 
-    # Check for dangerous combinations
-    penalty = 1.0
+    # Additive complexity (PySR style) instead of multiplicative
+    complexity = base_complexity + left_complexity + right_complexity
 
-    # Check if operands are operations that could cause issues
+    # Small additive penalties for dangerous combinations
+    penalty = 0.0
     if isinstance(self.left, (BinaryOpNode, UnaryOpNode)):
       left_op = self.left.operator
       combo_key = (self.operator, left_op)
-      penalty *= COMBINATION_PENALTIES.get(combo_key, 1.0)
+      penalty += COMBINATION_PENALTIES.get(combo_key, 0.0)
 
     if isinstance(self.right, (BinaryOpNode, UnaryOpNode)):
       right_op = self.right.operator
       combo_key = (self.operator, right_op)
-      penalty *= COMBINATION_PENALTIES.get(combo_key, 1.0)
+      penalty += COMBINATION_PENALTIES.get(combo_key, 0.0)
 
-    # Multiplicative complexity with penalty
-    return base_complexity * (1 + left_complexity + right_complexity) * penalty
+    return complexity + penalty
 
   def _compute_hash(self) -> int:
     return hash((NodeType.BINARY_OP, self.operator, hash(self.left), hash(self.right)))
@@ -344,18 +351,21 @@ class UnaryOpNode(Node):
     return 1 + self.operand.size()
 
   def _compute_complexity(self) -> float:
+    """PySR-style complexity calculation with additive penalties"""
     base_complexity = COMPLEXITY_WEIGHTS.get(self.operator, 1.0)
     operand_complexity = self.operand.complexity()
 
-    # Check for dangerous combinations
-    penalty = 1.0
+    # Additive complexity (PySR style) instead of multiplicative
+    complexity = base_complexity + operand_complexity
+
+    # Small additive penalty for dangerous combinations
+    penalty = 0.0
     if isinstance(self.operand, (BinaryOpNode, UnaryOpNode)):
       operand_op = self.operand.operator
       combo_key = (self.operator, operand_op)
-      penalty *= COMBINATION_PENALTIES.get(combo_key, 1.0)
+      penalty += COMBINATION_PENALTIES.get(combo_key, 0.0)
 
-    # Multiplicative complexity with penalty
-    return base_complexity * (1 + operand_complexity) * penalty
+    return complexity + penalty
 
   def _compute_hash(self) -> int:
     return hash((NodeType.UNARY_OP, self.operator, hash(self.operand)))
@@ -454,14 +464,19 @@ class ScalingOpNode(Node):
     return 1 + self.operand.size()
 
   def _compute_complexity(self) -> float:
-    base_complexity = COMPLEXITY_WEIGHTS.get('scale', 2.0)
+    """PySR-style complexity calculation with additive penalties"""
+    base_complexity = COMPLEXITY_WEIGHTS.get('scale', 1.8)
     operand_complexity = self.operand.complexity()
 
-    penalty = 1.0
-    if isinstance(self.operand, ScalingOpNode):
-        penalty *= COMBINATION_PENALTIES.get(('scale', 'scale'), 3.0)
+    # Additive complexity (PySR style)
+    complexity = base_complexity + operand_complexity
 
-    return base_complexity * (1 + operand_complexity) * penalty
+    # Small additive penalty for nested scaling
+    penalty = 0.0
+    if isinstance(self.operand, ScalingOpNode):
+        penalty += COMBINATION_PENALTIES.get(('scale', 'scale'), 0.4)
+
+    return complexity + penalty
 
   def _compute_hash(self) -> int:
     # Use proper NodeType for scaling operations
@@ -479,7 +494,7 @@ class ScalingOpNode(Node):
 
   def to_sympy(self, c_generator):
     operand_sympy = self.operand.to_sympy(c_generator)
-    return operand_sympy * (10.**self.power)
+    return sp.Mul(operand_sympy, sp.Pow(sp.Integer(10), self.power))
 
   def get_constants(self, constant_list):
     self.operand.get_constants(constant_list)

@@ -17,7 +17,7 @@ from .expression_tree.utils.sympy_utils import SymPySimplifier
 # Import from consolidated modules
 from .evolution import EvolutionEngine
 from .population_management import PopulationManager, GreatPowers
-from .data_processing import DataScaler, MultiScaleFitnessEvaluator
+from .data_processing import DataScaler, standard_fitness_function
 from .utilities import get_evolution_stats, get_detailed_expressions
 
 
@@ -43,9 +43,6 @@ class MIMOSymbolicRegressor:
                  evolution_sympy_simplify: bool = False,  # Disabled during evolution
                  evolution_constant_optimize: bool = False,  # Disabled during evolution
                  final_optimization_generations: int = 5,  # Apply optimization in final N generations
-                 # Multi-scale fitness evaluation
-                 use_multi_scale_fitness: bool = True,
-                 extreme_value_threshold: float = 1e6,
                  # Early termination and late extension parameters
                  enable_early_termination: bool = True,
                  early_termination_threshold: float = 0.99,
@@ -80,16 +77,6 @@ class MIMOSymbolicRegressor:
 
         # REMOVED: All data scaling functionality (deprecated)
         # Now works with raw data only for better physical interpretability
-
-        # Multi-scale fitness evaluation
-        self.use_multi_scale_fitness = use_multi_scale_fitness
-        self.fitness_evaluator: Optional[MultiScaleFitnessEvaluator] = None
-        if use_multi_scale_fitness:
-            self.fitness_evaluator = MultiScaleFitnessEvaluator(
-                use_log_space=True,
-                use_relative_metrics=True,
-                extreme_value_threshold=extreme_value_threshold
-            )
 
         # Early termination and late extension parameters
         self.enable_early_termination = enable_early_termination

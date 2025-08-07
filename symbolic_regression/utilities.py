@@ -160,7 +160,8 @@ def optimize_final_expressions(expressions: List[Expression], X: np.ndarray, y: 
 
 def evaluate_optimized_expressions(expressions: List[Expression], X: np.ndarray, y: np.ndarray, 
                                   parsimony_coefficient: float = 0.01) -> List[float]:
-    """Re-evaluate expressions after optimization using R² scores"""
+    """Re-evaluate expressions after optimization using R² scores with PySR-style parsimony"""
+    from .adaptive_parsimony import PySRStyleComplexity
     fitness_scores = []
     
     for expr in expressions:
@@ -181,9 +182,11 @@ def evaluate_optimized_expressions(expressions: List[Expression], X: np.ndarray,
                 else:
                     r2 = 1.0 - (ss_res / ss_tot)
             
-            # Apply parsimony penalty to R² score
-            complexity_penalty = parsimony_coefficient * expr.complexity()
-            fitness = r2 - complexity_penalty
+            # Apply PySR-style parsimony penalty
+            parsimony_penalty = PySRStyleComplexity.get_parsimony_penalty(
+                expr, parsimony_coefficient
+            )
+            fitness = r2 - parsimony_penalty
             
             fitness_scores.append(fitness)
         except Exception:

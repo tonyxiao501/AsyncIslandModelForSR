@@ -36,7 +36,7 @@ def main():
   print(f"Training data: {X_train.shape[0]} samples with 5% noise")
   print(f"Test data: {X_test.shape[0]} samples (for plotting)")
 
-  # Instantiate the ensemble regressor with optimized parameters
+  # Instantiate the ensemble regressor with optimized parameters and PySR-style parsimony
   model = EnsembleMIMORegressor(
     n_fits=8,                    
     top_n_select=5,             
@@ -46,13 +46,14 @@ def main():
     crossover_rate=0.8,
     tournament_size=3,
     max_depth=5,
-    parsimony_coefficient=0.003,
+    parsimony_coefficient=0.003,  # Base coefficient for adaptive parsimony
     diversity_threshold=0.6,     
     adaptive_rates=True,
     restart_threshold=15,        
     elite_fraction=0.12,
-    enable_data_scaling=False,
-    use_multi_scale_fitness=False,
+    # PySR-style adaptive parsimony settings
+    enable_adaptive_parsimony=True,  # Enable adaptive parsimony coefficient
+    domain_type="general",           # Domain-specific operator weighting ("physics", "engineering", "biology", "general")
     # Early termination and late extension parameters
     enable_early_termination=True,
     early_termination_threshold=0.99,     # Terminate if R² >= 0.99
@@ -64,6 +65,7 @@ def main():
 
   print("\nTraining symbolic regression ensemble model...")
   print("Target: 2*sin(x) + cos(2*x)")
+  print("Using PySR-style adaptive parsimony and optimized complexity weights...")
   print("This should converge relatively quickly...")
 
   # Train the ensemble model (concurrent fitting)

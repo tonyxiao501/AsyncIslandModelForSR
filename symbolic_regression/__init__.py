@@ -28,6 +28,7 @@ from .utilities import (
   get_evolution_stats, get_detailed_expressions
 )
 from .evolution import update_adaptive_parameters, restart_population_enhanced
+from .adaptive_parsimony import AdaptiveParsimonySystem, CustomOperatorWeights, PySRStyleComplexity
 
 __version__ = "0.1.0"
 __all__ = [
@@ -45,5 +46,6 @@ __all__ = [
   "calculate_population_diversity",
   "update_adaptive_parameters", "restart_population_enhanced",
   "to_sympy_expression", "optimize_constants",
-  "get_evolution_stats", "get_detailed_expressions"
+  "get_evolution_stats", "get_detailed_expressions",
+  "AdaptiveParsimonySystem", "CustomOperatorWeights", "PySRStyleComplexity"
 ]

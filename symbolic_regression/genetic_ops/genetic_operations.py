@@ -269,7 +269,7 @@ class GeneticOperations:
     def _evaluate_fitness(self, expr: Expression, X: Optional[np.ndarray] = None, 
                          y: Optional[np.ndarray] = None, parsimony_coefficient: float = 0.001) -> float:
         """
-        Evaluate the fitness of a single expression using R² score.
+        Evaluate the fitness of a single expression using R² score with PySR-style parsimony.
         If X and y are not provided, returns a large negative value.
         """
         if X is None or y is None:
@@ -277,6 +277,7 @@ class GeneticOperations:
 
         try:
             from sklearn.metrics import r2_score
+            from ..adaptive_parsimony import PySRStyleComplexity
             
             predictions = expr.evaluate(X)
             if predictions.ndim == 1:
@@ -294,8 +295,12 @@ class GeneticOperations:
                 else:
                     r2 = 1.0 - (ss_res / ss_tot)
             
-            # Apply penalties to R² score
-            complexity_penalty = parsimony_coefficient * expr.complexity()
+            # Apply PySR-style parsimony penalty
+            parsimony_penalty = PySRStyleComplexity.get_parsimony_penalty(
+                expr, parsimony_coefficient
+            )
+            
+            # Apply stability penalties
             stability_penalty = 0.0
             max_abs_pred = np.max(np.abs(predictions))
             
@@ -307,7 +312,7 @@ class GeneticOperations:
             if np.any(~np.isfinite(predictions)):
                 stability_penalty += 0.5  # Heavily penalize infinite/NaN
             
-            fitness = r2 - complexity_penalty - stability_penalty
+            fitness = r2 - parsimony_penalty - stability_penalty
             return float(fitness)
         except Exception:
             return -10.0  # Large negative R² score for invalid expressions
