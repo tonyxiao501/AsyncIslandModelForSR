@@ -8,7 +8,6 @@ import os
 import time
 import warnings
 from typing import List, Optional, Dict, Any, Tuple
-from sklearn.metrics import r2_score
 
 from .expression_tree import Expression
 from .generator import ExpressionGenerator
@@ -17,7 +16,7 @@ from .expression_tree.utils.sympy_utils import SymPySimplifier
 # Import from consolidated modules
 from .evolution import EvolutionEngine
 from .population_management import PopulationManager, GreatPowers
-from .data_processing import DataScaler, standard_fitness_function
+from .data_processing import DataScaler, standard_fitness_function, r2_score
 from .utilities import get_evolution_stats, get_detailed_expressions
 
 

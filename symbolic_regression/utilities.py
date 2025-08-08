@@ -8,11 +8,11 @@ import warnings
 import time
 from typing import List, Dict, Any, Optional, Tuple, Union
 from scipy.optimize import OptimizeWarning, curve_fit
-from sklearn.metrics import r2_score
 import sympy as sp
 from .expression_tree import Expression
 from .expression_tree.core.node import Node, BinaryOpNode, UnaryOpNode
 from .expression_tree.utils.tree_utils import get_all_nodes
+from .data_processing import r2_score
 
 # Global caches for optimization
 _SIMPLIFICATION_CACHE: Dict[str, str] = {}

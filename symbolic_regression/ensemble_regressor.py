@@ -694,7 +694,7 @@ class EnsembleMIMORegressor:
         Returns:
             float: R² score
         """
-        from sklearn.metrics import r2_score
+        from .data_processing import r2_score
         
         if not self.best_expressions:
             raise ValueError("Model has not been fitted yet. Call fit() first.")

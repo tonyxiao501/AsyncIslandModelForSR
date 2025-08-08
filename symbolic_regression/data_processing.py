@@ -5,7 +5,75 @@ This module provides minimal preprocessing for physics data while preserving phy
 
 import numpy as np
 from typing import Tuple
-from sklearn.metrics import r2_score
+
+
+def r2_score(y_true, y_pred):
+    """
+    Robust R² score calculation that handles numerical issues better than sklearn.
+    
+    Key improvements:
+    1. Better handling of extreme values (very small/large numbers common in physics)
+    2. More robust numerical computation using double precision
+    3. Explicit handling of edge cases
+    4. Clamping to prevent overflow/underflow issues
+    """
+    y_true = np.asarray(y_true).flatten()
+    y_pred = np.asarray(y_pred).flatten()
+    
+    # Handle edge cases
+    if len(y_true) == 0:
+        return 0.0
+    
+    # Check for invalid predictions
+    if np.any(~np.isfinite(y_pred)):
+        return -10.0  # Large negative score for invalid predictions
+    
+    # Calculate mean
+    y_mean = np.mean(y_true)
+    
+    # Handle case where true values have no variance
+    y_var = np.var(y_true)
+    if y_var == 0 or y_var < 1e-30:  # Very small variance
+        if np.allclose(y_pred, y_true, rtol=1e-10):
+            return 1.0
+        else:
+            return 0.0
+    
+    # Calculate sums of squares with numerical stability and overflow protection
+    try:
+        # Use double precision for intermediate calculations
+        y_true_dp = y_true.astype(np.float64)
+        y_pred_dp = y_pred.astype(np.float64)
+        y_mean_dp = np.float64(y_mean)
+        
+        # Check for extreme values that might cause overflow
+        diff_pred = y_true_dp - y_pred_dp
+        diff_mean = y_true_dp - y_mean_dp
+        
+        # Check if differences are too large (would cause overflow when squared)
+        max_safe_value = 1e100  # Conservative threshold
+        if np.any(np.abs(diff_pred) > max_safe_value) or np.any(np.abs(diff_mean) > max_safe_value):
+            return -10.0
+        
+        # Compute residual and total sums of squares with overflow protection
+        with np.errstate(over='raise', invalid='raise'):
+            ss_res = np.sum(diff_pred ** 2)
+            ss_tot = np.sum(diff_mean ** 2)
+        
+        # Handle division by zero
+        if ss_tot == 0.0 or ss_tot < 1e-30:
+            return 1.0 if ss_res == 0.0 or ss_res < 1e-30 else 0.0
+        
+        # Compute R² with overflow protection
+        with np.errstate(over='raise', invalid='raise'):
+            r2 = 1.0 - (ss_res / ss_tot)
+        
+        # Clamp to reasonable range to prevent extreme values
+        return float(np.clip(r2, -10.0, 1.0))
+        
+    except (OverflowError, RuntimeWarning, FloatingPointError, Warning):
+        # If calculation fails due to numerical issues, return very negative score
+        return -10.0
 
 
 class DataScaler:

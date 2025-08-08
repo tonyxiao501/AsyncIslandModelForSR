@@ -327,7 +327,7 @@ class EvolutionEngine:
                 predictions = expr.evaluate(X_scaled)
                 
                 # Calculate R² score
-                from sklearn.metrics import r2_score
+                from .data_processing import r2_score
                 r2 = r2_score(y_scaled.flatten(), predictions.flatten())
                 
                 # Apply parsimony penalty

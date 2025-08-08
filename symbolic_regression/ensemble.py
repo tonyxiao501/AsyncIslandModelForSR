@@ -563,7 +563,7 @@ class EnsembleMIMORegressor:
         Returns:
             float: The R² score.
         """
-        from sklearn.metrics import r2_score
+        from .data_processing import r2_score
         
         if not self.best_expressions:
             raise ValueError("Model has not been fitted yet. Call fit() first.")
@@ -573,7 +573,7 @@ class EnsembleMIMORegressor:
         if y.ndim == 1:
             y = y.reshape(-1, 1)
 
-        # Use scikit-learn's R² implementation for consistency
+        # Use our robust R² implementation for better numerical stability
         try:
             return r2_score(y.flatten(), predictions.flatten())
         except Exception:

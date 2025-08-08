@@ -276,14 +276,14 @@ class GeneticOperations:
             return -10.0  # Large negative R² score when data unavailable
 
         try:
-            from sklearn.metrics import r2_score
+            from ..data_processing import r2_score
             from ..adaptive_parsimony import PySRStyleComplexity
             
             predictions = expr.evaluate(X)
             if predictions.ndim == 1:
                 predictions = predictions.reshape(-1, 1)
             
-            # Calculate R² score using scikit-learn
+            # Calculate R² score using our robust implementation
             try:
                 r2 = r2_score(y.flatten(), predictions.flatten())
             except Exception:
