@@ -151,6 +151,34 @@ def standard_fitness_function(y_true: np.ndarray, y_pred: np.ndarray,
         return -10.0
 
 
+# --- Additional robust metrics for fitness options ---
+def mae_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Mean Absolute Error with basic sanitization."""
+    yt = np.asarray(y_true, dtype=float).flatten()
+    yp = np.asarray(y_pred, dtype=float).flatten()
+    if yt.size == 0:
+        return float('inf')
+    if np.any(~np.isfinite(yp)):
+        return 1e12
+    diff = np.abs(yt - yp)
+    return float(np.mean(np.nan_to_num(diff, nan=1e12, posinf=1e12, neginf=1e12)))
+
+
+def huber_loss(y_true: np.ndarray, y_pred: np.ndarray, delta: float = 1.0) -> float:
+    """Huber loss (smooth L1) with parameter delta."""
+    yt = np.asarray(y_true, dtype=float).flatten()
+    yp = np.asarray(y_pred, dtype=float).flatten()
+    if yt.size == 0:
+        return float('inf')
+    if np.any(~np.isfinite(yp)):
+        return 1e12
+    d = np.abs(yt - yp)
+    quad = np.minimum(d, delta)
+    lin = d - quad
+    loss = 0.5 * (quad ** 2) + delta * lin
+    return float(np.mean(np.nan_to_num(loss, nan=1e12, posinf=1e12, neginf=1e12)))
+
+
 def prepare_physics_data(X: np.ndarray, y: np.ndarray, 
                         remove_outliers: bool = False, 
                         outlier_threshold: float = 5.0) -> Tuple[np.ndarray, np.ndarray]:

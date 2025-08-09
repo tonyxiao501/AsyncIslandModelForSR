@@ -39,16 +39,30 @@ class MIMOSymbolicRegressor:
                  elite_fraction: float = 0.1,
                  console_log=True,
                  # New optimization control parameters
-                 evolution_sympy_simplify: bool = False,  # Disabled during evolution
-                 evolution_constant_optimize: bool = False,  # Disabled during evolution
-                 final_optimization_generations: int = 5,  # Apply optimization in final N generations
+                 evolution_sympy_simplify: bool = False,
+                 evolution_constant_optimize: bool = False,
+                 final_optimization_generations: int = 5,
                  # Early termination and late extension parameters
                  enable_early_termination: bool = True,
                  early_termination_threshold: float = 0.99,
                  early_termination_check_interval: int = 10,
                  enable_late_extension: bool = True,
                  late_extension_threshold: float = 0.95,
-                 late_extension_generations: int = 50
+                 late_extension_generations: int = 50,
+                 # Optional SOTA features (disabled by default)
+                 enable_pareto_tracking: bool = False,
+                 pareto_capacity: int = 256,
+                 pareto_csv_path: Optional[str] = None,
+                 use_lexicase: bool = False,
+                 # Lexicase tuning and subsampling
+                 lexicase_epsilon: Optional[float] = None,
+                 lexicase_case_subsample: Optional[int] = None,
+                 lexicase_case_fraction: Optional[float] = 0.5,
+                 lexicase_bag_sticky_generations: int = 3,
+                 lexicase_informative_fraction: float = 0.7,
+                 # Fitness metric options
+                 loss: str = 'r2',
+                 huber_delta: float = 1.0
                  ):
 
         self.population_size = population_size
@@ -74,9 +88,6 @@ class MIMOSymbolicRegressor:
         self.restart_threshold = restart_threshold
         self.elite_fraction = elite_fraction
 
-        # REMOVED: All data scaling functionality (deprecated)
-        # Now works with raw data only for better physical interpretability
-
         # Early termination and late extension parameters
         self.enable_early_termination = enable_early_termination
         self.early_termination_threshold = early_termination_threshold
@@ -84,7 +95,23 @@ class MIMOSymbolicRegressor:
         self.enable_late_extension = enable_late_extension
         self.late_extension_threshold = late_extension_threshold
         self.late_extension_generations = late_extension_generations
-        self.late_extension_triggered = False  # Track if extension was already triggered
+        self.late_extension_triggered = False
+
+        # Optional features (off by default)
+        self.enable_pareto_tracking = enable_pareto_tracking
+        self.pareto_capacity = pareto_capacity
+        self.pareto_csv_path = pareto_csv_path
+        self.use_lexicase = use_lexicase
+        # Lexicase tuning
+        self.lexicase_epsilon = lexicase_epsilon
+        self.lexicase_case_subsample = lexicase_case_subsample
+        self.lexicase_case_fraction = lexicase_case_fraction
+        self.lexicase_bag_sticky_generations = lexicase_bag_sticky_generations
+        self.lexicase_informative_fraction = lexicase_informative_fraction
+
+        # Fitness metric configuration
+        self.loss = loss  # 'r2' | 'mae' | 'huber'
+        self.huber_delta = huber_delta
 
         # Evolution state tracking
         self.stagnation_counter = 0
@@ -94,13 +121,14 @@ class MIMOSymbolicRegressor:
         self.current_crossover_rate = crossover_rate
         self.generation_diversity_scores = []
 
-        self.n_inputs: Optional[int] = None
-        self.n_outputs: Optional[int] = None
-        self.best_expressions: List[Expression] = []
-        self.fitness_history: List[float] = []
-        
+        # Basic dims and history containers
+        self.n_inputs = None
+        self.n_outputs = None
+        self.best_expressions = []
+        self.fitness_history = []
+
         # Population manager (will be initialized when n_inputs is set)
-        self.pop_manager: Optional[PopulationManager] = None
+        self.pop_manager = None
 
         # Great Powers mechanism - tracks best 5 expressions across all generations
         self.great_powers = GreatPowers(max_powers=5)
@@ -118,7 +146,16 @@ class MIMOSymbolicRegressor:
             self.sympy_simplifier = SymPySimplifier()
 
         # Evolution engine (will be initialized in fit())
-        self.evolution_engine: Optional[EvolutionEngine] = None
+        self.evolution_engine = None
+        # Internal state for lexicase sticky bag (indices/age)
+        self._lexicase_bag_state = {'indices': None, 'age': 0}
+
+        # Initialize adaptive parsimony system (uses current parsimony_coefficient as base)
+        try:
+            from .adaptive_parsimony import AdaptiveParsimonySystem
+            self._parsimony_system = AdaptiveParsimonySystem(self.parsimony_coefficient, domain_type="general")
+        except Exception:
+            self._parsimony_system = None
 
     def enable_inter_thread_communication(self, shared_data, worker_id: int):
         """Enable inter-thread communication for this regressor instance"""

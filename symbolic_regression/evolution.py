@@ -6,7 +6,7 @@ population restart mechanisms, and the main evolution loop.
 import numpy as np
 import time
 import warnings
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from typing import List, Dict, Any, Optional, TYPE_CHECKING, Tuple
 from scipy.optimize import curve_fit, OptimizeWarning
 
 from .expression_tree import Expression
@@ -14,6 +14,8 @@ from .generator import ExpressionGenerator
 from .genetic_ops import GeneticOperations
 from .population_management import inject_diversity_optimized
 from .logging_system import get_logger, log_milestone, log_evolution_step, log_warning, log_debug
+from .pareto import ParetoFront, ParetoItem
+from .selection import enhanced_selection, tournament_selection, epsilon_lexicase_selection
 
 if TYPE_CHECKING:
     from .regressor import MIMOSymbolicRegressor
@@ -140,9 +142,9 @@ class EvolutionEngine:
         self.console_log = console_log
         self.logger = get_logger()
         
-    def run_evolution(self, X_scaled: np.ndarray, y_scaled: np.ndarray, 
-                     X_original: np.ndarray, y_original: np.ndarray, 
-                     constant_optimize: bool = False) -> List[Expression]:
+    def run_evolution(self, X_scaled: np.ndarray, y_scaled: np.ndarray,
+                      X_original: np.ndarray, y_original: np.ndarray,
+                      constant_optimize: bool = False) -> List[Expression]:
         """
         Run the complete evolution process and return the best expressions.
         EXACT COPY from working version evolution.py
@@ -154,7 +156,7 @@ class EvolutionEngine:
         generator = ExpressionGenerator(self.regressor.n_inputs, max_depth=self.regressor.max_depth)
         genetic_ops = GeneticOperations(self.regressor.n_inputs, max_complexity=20)
 
-        # Generate initial population using population management
+    # Generate initial population using population management
         from .population_management import generate_diverse_population_optimized, inject_diversity_optimized
         
         population = generate_diverse_population_optimized(
@@ -168,10 +170,32 @@ class EvolutionEngine:
 
         log_milestone("Starting evolution...")
 
+        # Optional: Initialize Pareto tracking if requested on regressor
+        pareto: Optional[ParetoFront] = None
+        if getattr(self.regressor, 'enable_pareto_tracking', False):
+            pareto = ParetoFront(capacity=getattr(self.regressor, 'pareto_capacity', 256))
+
         # Main evolution loop - EXACT COPY from working version
         for generation in range(self.regressor.generations):
-            # Evaluate population
-            fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
+            # Evaluate population and cache predictions/R² once per generation
+            fitness_scores, pred_matrix, r2_list = self._evaluate_population_with_predictions(
+                population, X_scaled, y_scaled, generation
+            )
+            # Update Pareto front (error = 1 - r2 approx from fitness + parsimony)
+            if pareto is not None:
+                yt = y_scaled.flatten()
+                for i, expr in enumerate(population):
+                    try:
+                        r2 = float(r2_list[i])
+                        err = float(max(0.0, 1.0 - r2))
+                    except Exception:
+                        err = 2.0
+                    pareto.add(ParetoItem(
+                        error=err,
+                        complexity=float(expr.complexity()),
+                        expression_str=expr.to_string(),
+                        generation=generation,
+                    ))
 
             # Track best fitness
             generation_best_fitness = max(fitness_scores)
@@ -253,8 +277,10 @@ class EvolutionEngine:
                         population, fitness_scores, injection_rate=0.3
                     )
                     
-                    # Re-evaluate after injection
-                    fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
+                    # Re-evaluate after injection and refresh caches
+                    fitness_scores, pred_matrix, r2_list = self._evaluate_population_with_predictions(
+                        population, X_scaled, y_scaled, generation
+                    )
 
             # Adaptive parameter adjustment
             if self.regressor.adaptive_rates:
@@ -285,6 +311,10 @@ class EvolutionEngine:
                     protected_indices=protected_indices
                 )
                 log_debug(f"Emergency diversity injection at generation {generation} (diversity={diversity_score:.3f}, protected={len(protected_indices)})")
+                # After modifying population, refresh fitness and caches for consistent selection
+                fitness_scores, pred_matrix, r2_list = self._evaluate_population_with_predictions(
+                    population, X_scaled, y_scaled, generation
+                )
             elif self.regressor.stagnation_counter > 6 and diversity_score < 0.4:  # Lowered threshold
                 # Get protected indices from Great Powers
                 protected_indices = self.great_powers.protect_elites_from_injection(
@@ -295,15 +325,21 @@ class EvolutionEngine:
                     self.pop_manager, self.regressor.stagnation_counter, console_log=False,
                     protected_indices=protected_indices
                 )
+                # After modifying population, refresh fitness and caches for consistent selection
+                fitness_scores, pred_matrix, r2_list = self._evaluate_population_with_predictions(
+                    population, X_scaled, y_scaled, generation
+                )
 
             # Genetic operations (selection, crossover, mutation)
             if generation < self.regressor.generations - 1:  # Don't evolve on the last generation
                 population = self._apply_genetic_operations(
-                    population, fitness_scores, genetic_ops, generator, diversity_score
+                    population, fitness_scores, genetic_ops, generator, diversity_score,
+                    pred_matrix if getattr(self.regressor, 'use_lexicase', False) else None,
+                    y_scaled if getattr(self.regressor, 'use_lexicase', False) else None
                 )
 
         # Final evaluation and return best expressions
-        final_fitness_scores = self._evaluate_population_enhanced_with_scaling(population, X_scaled, y_scaled, X_original, y_original)
+        final_fitness_scores, _, _ = self._evaluate_population_with_predictions(population, X_scaled, y_scaled, generation)
 
         # Find final best expression
         final_best_fitness = max(final_fitness_scores)
@@ -313,7 +349,90 @@ class EvolutionEngine:
 
         log_milestone(f"Evolution completed. Final best fitness: {max(final_fitness_scores):.6f}")
 
+        # Final Pareto dump if enabled
+        if pareto is not None and getattr(self.regressor, 'pareto_csv_path', None):
+            try:
+                pareto.to_csv(getattr(self.regressor, 'pareto_csv_path'))
+            except Exception:
+                pass
+
         return self.regressor.best_expressions
+
+    def _evaluate_population_with_predictions(self, population: List[Expression],
+                                              X_scaled: np.ndarray,
+                                              y_scaled: np.ndarray,
+                                              generation: int) -> Tuple[List[float], np.ndarray, np.ndarray]:
+        """Evaluate population and return fitness scores, predictions matrix, and per-individual R².
+
+        This consolidates evaluation to avoid repeated predictions for lexicase selection
+        and Pareto updates within the same generation.
+        """
+        fitness_scores: List[float] = []
+        preds_list: List[np.ndarray] = []
+        r2_list: List[float] = []
+
+        n_samples = X_scaled.shape[0]
+
+        from .data_processing import r2_score, mae_loss, huber_loss
+
+        for expr in population:
+            try:
+                pred = expr.evaluate(X_scaled)
+                pred = np.asarray(pred, dtype=float)
+                if pred.ndim == 1:
+                    pred = pred.reshape(-1, 1)
+                pred = np.nan_to_num(pred, nan=0.0, posinf=1e6, neginf=-1e6)
+                pred = np.clip(pred, -1e6, 1e6)
+
+                # Compute per-output metric and aggregate across outputs
+                if pred.shape[1] > 1 and y_scaled.ndim == 2 and y_scaled.shape[1] > 1:
+                    # Align shapes
+                    y_cols = y_scaled.shape[1]
+                    p_cols = pred.shape[1]
+                    m = min(y_cols, p_cols)
+                    if self.regressor.loss == 'r2':
+                        r2_vals = [r2_score(y_scaled[:, i], pred[:, i]) for i in range(m)]
+                        score_agg = float(np.mean(r2_vals)) if m > 0 else -10.0
+                    elif self.regressor.loss == 'mae':
+                        maes = [mae_loss(y_scaled[:, i], pred[:, i]) for i in range(m)]
+                        score_agg = -float(np.mean(maes)) if m > 0 else -10.0
+                    else:  # huber
+                        hub = [huber_loss(y_scaled[:, i], pred[:, i], delta=float(getattr(self.regressor, 'huber_delta', 1.0))) for i in range(m)]
+                        score_agg = -float(np.mean(hub)) if m > 0 else -10.0
+                else:
+                    # Single-output or fallback flatten
+                    if self.regressor.loss == 'r2':
+                        score_agg = float(r2_score(y_scaled.flatten(), pred.flatten()))
+                    elif self.regressor.loss == 'mae':
+                        score_agg = -float(mae_loss(y_scaled.flatten(), pred.flatten()))
+                    else:
+                        score_agg = -float(huber_loss(y_scaled.flatten(), pred.flatten(), delta=float(getattr(self.regressor, 'huber_delta', 1.0))))
+
+                # Adaptive parsimony coefficient (fallback to fixed if unavailable)
+                _ps = getattr(self.regressor, '_parsimony_system', None)
+                if _ps is not None:
+                    diversity_hint = self.regressor.diversity_history[-1] if self.regressor.diversity_history else 1.0
+                    parsimony_coeff = float(_ps.get_adaptive_coefficient(
+                        generation, int(self.regressor.generations), float(diversity_hint)
+                    ))
+                else:
+                    parsimony_coeff = float(self.regressor.parsimony_coefficient)
+
+                complexity_penalty = parsimony_coeff * expr.complexity()
+                fitness = float(score_agg - complexity_penalty)
+
+                fitness_scores.append(fitness)
+                # Store per-sample mean prediction for lexicase error construction
+                preds_list.append(np.mean(pred, axis=1) if pred.ndim == 2 else pred.reshape(n_samples))
+                r2_list.append(float(score_agg))
+            except Exception:
+                # Invalid expression
+                fitness_scores.append(-10.0)
+                preds_list.append(np.zeros(n_samples, dtype=float))
+                r2_list.append(0.0)
+
+        pred_matrix = np.stack(preds_list, axis=0) if preds_list else np.zeros((0, X_scaled.shape[0]))
+        return fitness_scores, pred_matrix, np.asarray(r2_list, dtype=float)
 
     def _evaluate_population_enhanced_with_scaling(self, population: List[Expression], 
                                                  X_scaled: np.ndarray, y_scaled: np.ndarray,
@@ -349,11 +468,100 @@ class EvolutionEngine:
         return fitness_scores
 
     def _apply_genetic_operations(self, population: List[Expression], fitness_scores: List[float],
-                                genetic_ops: GeneticOperations, generator: ExpressionGenerator, diversity_score: float) -> List[Expression]:
+                                  genetic_ops: GeneticOperations, generator: ExpressionGenerator, diversity_score: float,
+                                  preds_for_lexicase: Optional[np.ndarray] = None,
+                                  y_for_lexicase: Optional[np.ndarray] = None) -> List[Expression]:
         """Apply selection, crossover, and mutation operations"""
-        from .selection import enhanced_selection, tournament_selection
+        
         
         new_population = []
+        # Precompute errors matrix once if using lexicase with informative subsampling and sticky bags
+        errors = None
+        if preds_for_lexicase is not None and y_for_lexicase is not None and getattr(self.regressor, 'use_lexicase', False):
+            try:
+                # Build per-sample target as mean across outputs for lexicase
+                if y_for_lexicase.ndim == 1:
+                    Y = np.asarray(y_for_lexicase, dtype=float).flatten()
+                else:
+                    Y = np.asarray(np.mean(y_for_lexicase, axis=1), dtype=float).flatten()
+                full_errors = np.abs(preds_for_lexicase - Y[None, :])  # (n_individuals, n_cases)
+                n_cases = full_errors.shape[1]
+
+                # Determine desired bag size k
+                k = getattr(self.regressor, 'lexicase_case_subsample', None)
+                frac = getattr(self.regressor, 'lexicase_case_fraction', None)
+                # Support explicit full-case modes
+                if isinstance(k, str) and k.lower() == 'all':
+                    k = n_cases
+                if k is None and frac is not None:
+                    if isinstance(frac, (int, float)) and frac >= 1.0:
+                        k = n_cases
+                    else:
+                        k = max(1, int(round(float(frac) * n_cases)))
+                # Apply default safety: k = min(128, n_cases) if k invalid
+                if not isinstance(k, int) or k <= 0 or k > n_cases:
+                    k = min(128, n_cases)
+
+                # Sticky bag: reuse indices for several generations
+                sticky_T = int(getattr(self.regressor, 'lexicase_bag_sticky_generations', 0) or 0)
+                if sticky_T > 0:
+                    if not hasattr(self.regressor, '_lexicase_bag_state'):
+                        self.regressor._lexicase_bag_state = {'indices': None, 'age': 0}
+                    bag = self.regressor._lexicase_bag_state
+                else:
+                    bag = {'indices': None, 'age': 0}
+
+                need_new_bag = bag['indices'] is None or bag['age'] >= sticky_T
+                if need_new_bag:
+                    # Informative (disagreement-aware) sampling: rank cases by std of predictions across individuals
+                    # Use preds_for_lexicase (n_individuals, n_cases)
+                    try:
+                        pred_std = np.std(preds_for_lexicase, axis=0)
+                    except Exception:
+                        pred_std = np.random.rand(n_cases)
+                    informative_frac = float(getattr(self.regressor, 'lexicase_informative_fraction', 0.8) or 0.8)
+                    informative_k = int(round(informative_frac * k))
+                    informative_k = max(0, min(k, informative_k))
+
+                    # Top informative_k by std
+                    if informative_k > 0:
+                        top_idx = np.argpartition(-pred_std, kth=min(informative_k - 1, n_cases - 1))[:informative_k]
+                    else:
+                        top_idx = np.array([], dtype=int)
+                    # Fill remaining with random choices from the rest
+                    remaining = k - informative_k
+                    if remaining > 0:
+                        mask = np.ones(n_cases, dtype=bool)
+                        mask[top_idx] = False
+                        pool = np.where(mask)[0]
+                        if pool.size >= remaining:
+                            rand_idx = np.random.choice(pool, size=remaining, replace=False)
+                        else:
+                            rand_idx = pool
+                        indices = np.concatenate([top_idx, rand_idx]) if top_idx.size else rand_idx
+                    else:
+                        indices = top_idx
+
+                    # Shuffle indices to avoid order bias in lexicase
+                    if indices.size > 1:
+                        np.random.shuffle(indices)
+
+                    bag['indices'] = indices
+                    bag['age'] = 0
+                else:
+                    indices = bag['indices']
+                    bag['age'] += 1
+
+                # Slice errors by bag indices
+                if indices is not None and indices.size > 0:
+                    errors = full_errors[:, indices]
+                else:
+                    errors = full_errors
+                # Persist bag state back to regressor if sticky
+                if getattr(self.regressor, 'lexicase_bag_sticky_generations', 0):
+                    self.regressor._lexicase_bag_state = bag
+            except Exception:
+                errors = None
         
         # Elite preservation
         elite_count = max(1, int(self.regressor.population_size * self.regressor.elite_fraction))
@@ -364,12 +572,17 @@ class EvolutionEngine:
         while len(new_population) < self.regressor.population_size:
             if np.random.rand() < self.regressor.current_crossover_rate:
                 # Crossover
-                parent1 = enhanced_selection(population, fitness_scores, diversity_score, 
-                                             self.regressor.diversity_threshold, self.regressor.tournament_size, 
-                                             self.regressor.stagnation_counter)
-                parent2 = enhanced_selection(population, fitness_scores, diversity_score, 
-                                             self.regressor.diversity_threshold, self.regressor.tournament_size, 
-                                             self.regressor.stagnation_counter)
+                if errors is not None:
+                    eps = getattr(self.regressor, 'lexicase_epsilon', None)
+                    parent1 = epsilon_lexicase_selection(population, errors, epsilon=eps)
+                    parent2 = epsilon_lexicase_selection(population, errors, epsilon=eps)
+                else:
+                    parent1 = enhanced_selection(population, fitness_scores, diversity_score,
+                                                 self.regressor.diversity_threshold, self.regressor.tournament_size,
+                                                 self.regressor.stagnation_counter)
+                    parent2 = enhanced_selection(population, fitness_scores, diversity_score,
+                                                 self.regressor.diversity_threshold, self.regressor.tournament_size,
+                                                 self.regressor.stagnation_counter)
                 
                 # Get crossover offspring (returns tuple of two children)
                 offspring1, offspring2 = genetic_ops.crossover(parent1, parent2)
@@ -392,8 +605,12 @@ class EvolutionEngine:
                     new_population.append(parent2.copy())
             else:
                 # Direct selection and mutation
-                parent = tournament_selection(population, fitness_scores, self.regressor.tournament_size, 
-                                              self.regressor.stagnation_counter)
+                if errors is not None:
+                    eps = getattr(self.regressor, 'lexicase_epsilon', None)
+                    parent = epsilon_lexicase_selection(population, errors, epsilon=eps)
+                else:
+                    parent = tournament_selection(population, fitness_scores, self.regressor.tournament_size,
+                                                  self.regressor.stagnation_counter)
                 offspring = genetic_ops.mutate(parent, self.regressor.current_mutation_rate)
                 
                 if self.pop_manager.is_expression_valid_cached(offspring):

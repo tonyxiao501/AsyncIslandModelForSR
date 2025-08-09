@@ -36,6 +36,12 @@ def main():
   print(f"Training data: {X_train.shape[0]} samples with 5% noise")
   print(f"Test data: {X_test.shape[0]} samples (for plotting)")
 
+  # Prepare output directory early so Pareto CSV can be written during fit
+  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+  output_dir = f"{timestamp}_fit_result"
+  os.makedirs(output_dir, exist_ok=True)
+  pareto_csv_path = os.path.join(output_dir, "pareto_front.csv")
+
   # Instantiate the ensemble regressor with optimized parameters and PySR-style parsimony
   model = EnsembleMIMORegressor(
     n_fits=8,                    
@@ -64,7 +70,14 @@ def main():
     # NEW: Enable asynchronous migration system
     use_asynchronous_migration=True,      # Use the new asynchronous island-specific cache system
     migration_interval=20,               # Average generations between migration events
-    migration_probability=0.3            # Probability of migration per cycle
+    migration_probability=0.3,            # Probability of migration per cycle
+    # NEW: Enable ε-lexicase selection and Pareto tracking in each island's regressor
+    use_lexicase=True,
+  # Lexicase tuning and subsampling (using safer defaults now)
+  lexicase_epsilon=None,           # Use MAD-based eps if None
+    enable_pareto_tracking=True,
+    pareto_capacity=512,
+    pareto_csv_path=pareto_csv_path
   )
 
   print("\nTraining symbolic regression ensemble model...")
@@ -124,12 +137,9 @@ def main():
   # Get fitness histories for the top expressions
   fitness_histories = model.get_fitness_histories()
 
-  # Create output directory with current date and time
-  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-  output_dir = f"{timestamp}_fit_result"
-  if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
   print(f"\nSaving plots to directory: {output_dir}")
+  if os.path.exists(pareto_csv_path):
+    print(f"Pareto front saved to: {pareto_csv_path}")
 
   # Create 5 separate graphs for each candidate expression
   colors = ['red', 'green', 'orange', 'purple', 'brown']

@@ -59,76 +59,101 @@ class Expression:
     self.root.set_constants(constants)   
     self.clear_cache() 
 
-# Function: lambda X, *params -> Y
-# Returns None if fails to lambdify or bad operation (x - x) -> 0
+  # Function: lambda X, *params -> Y
+  # Returns None if fails to lambdify or bad operation (x - x) -> 0
   def vector_lambdify(self) -> Optional[Callable]:
     constants = self.get_constants()
-    
+
     try:
-        sp_expr = self.to_sympy()
+      sp_expr = self.to_sympy()
     except Exception:
-        return None
-    
+      return None
+
     c_dim = len(constants)
-    
+
     # Get all free symbols and separate variables from constants
     all_free_symbols = sp_expr.free_symbols
-    
+
     # Variables are symbols like x0, x1, x2, etc.
-    var_symbols = sorted([s for s in all_free_symbols if str(s).startswith('x')], 
-                        key=lambda s: int(str(s)[1:]))
-    
+    var_symbols = sorted([s for s in all_free_symbols if str(s).startswith('x')],
+                         key=lambda s: int(str(s)[1:]))
+
     # Constants are symbols like c0, c1, c2, etc.
-    const_symbols = sorted([s for s in all_free_symbols if str(s).startswith('c')], 
-                          key=lambda s: int(str(s)[1:]))
-    
+    const_symbols = sorted([s for s in all_free_symbols if str(s).startswith('c')],
+                           key=lambda s: int(str(s)[1:]))
+
     x_dim = len(var_symbols)
-    
+
     # Must have at least one variable
     if x_dim <= 0:
-        return None
-    
+      return None
+
     # Check that we have the right number of constants
     if len(const_symbols) != c_dim:
-        return None
-    
+      return None
+
     # Create ordered symbol list for lambdify
     symbols = var_symbols + const_symbols
-    
+
     try:
-        lambda_func = sp.lambdify(symbols, sp_expr, modules='numpy')
+      # Use safe numpy wrappers to avoid domain warnings (log/sqrt/etc.)
+      def _safe_pow(a, b):
+        base = np.asarray(a)
+        expo = np.asarray(b, dtype=float)
+        baseabs = np.abs(base) + 1e-12
+        expo_clip = np.clip(expo, -10.0, 10.0)
+        with np.errstate(invalid='ignore', over='ignore'):
+          res = np.power(baseabs, expo_clip)
+          # Handle cube-root specially to preserve sign: x**(1/3)
+          mask = np.isclose(expo_clip, 1.0/3.0, atol=1e-12)
+          if np.any(mask):
+            cr = np.sign(base) * np.power(baseabs, 1.0/3.0)
+            res = np.where(mask, cr, res)
+        return np.nan_to_num(res, nan=0.0, posinf=1e6, neginf=-1e6)
+
+      safe_np = {
+        'log': lambda x: np.log(np.abs(x) + 1e-12),
+        'sqrt': lambda x: np.sqrt(np.abs(x)),
+        'log1p': lambda x: np.log1p(np.clip(x, -1 + 1e-12, 1e12)),
+        'expm1': lambda x: np.expm1(np.clip(x, -50.0, 50.0)),
+        'tan': lambda x: np.tan(np.clip(x, -1.5, 1.5)),
+        'exp': lambda x: np.exp(np.clip(x, -50.0, 50.0)),
+        'cbrt': lambda x: np.sign(x) * np.power(np.abs(x), 1.0/3.0),
+        'power': _safe_pow,
+      }
+      lambda_func = sp.lambdify(symbols, sp_expr, modules=[safe_np, 'numpy'])
     except Exception:
-        return None
-    
+      return None
+
     # Create wrapper function for proper parameter handling
     def wrapper(X, *params):
-        X_arr = np.asarray(X)
-        
-        # Handle scalar input
-        if X_arr.ndim == 0:
-            return lambda_func(X_arr, *params)
-        
-        # Handle 1D input (single variable)
-        elif X_arr.ndim == 1:
-            if x_dim == 1:
-                return lambda_func(X_arr, *params)
-            else:
-                # Multiple variables, X should be 2D
-                return None
-        
-        # Handle 2D input (multiple variables)
-        elif X_arr.ndim == 2:
-            # X should be shape (n_samples, n_features)
-            if X_arr.shape[1] != x_dim:
-                return None
-            
-            # Unpack variables from columns
-            var_args = [X_arr[:, i] for i in range(x_dim)]
-            return lambda_func(*var_args, *params)
-        
+      X_arr = np.asarray(X)
+
+      # Handle scalar input
+      if X_arr.ndim == 0:
+        return lambda_func(X_arr, *params)
+
+      # Handle 1D input (single variable)
+      elif X_arr.ndim == 1:
+        if x_dim == 1:
+          return lambda_func(X_arr, *params)
         else:
-            return None
-    
+          # Multiple variables, X should be 2D
+          return None
+
+      # Handle 2D input (multiple variables)
+      elif X_arr.ndim == 2:
+        # X should be shape (n_samples, n_features)
+        if X_arr.shape[1] != x_dim:
+          return None
+
+        # Unpack variables from columns
+        var_args = [X_arr[:, i] for i in range(x_dim)]
+        return lambda_func(*var_args, *params)
+
+      else:
+        return None
+
     return wrapper
 
   def __hash__(self) -> int:
