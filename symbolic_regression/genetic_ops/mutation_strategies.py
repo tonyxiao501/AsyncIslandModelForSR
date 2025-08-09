@@ -110,60 +110,66 @@ class MutationStrategies:
         """Mutate unary operator with semantic grouping and physics bias"""
         # Enhanced operator groups for physics
         trig_ops = ['sin', 'cos', 'tan']
-        exp_log_ops = ['exp', 'log', 'log_abs']
+        exp_log_ops = ['exp', 'expm1', 'log', 'log1p', 'log_abs']
         power_ops = ['sqrt', 'cbrt', 'fourth_root', 'square', 'cube']
         reciprocal_ops = ['reciprocal', 'inv_square']  # Critical for physics
         hyperbolic_ops = ['sinh', 'cosh', 'tanh']
         safe_ops = ['sqrt_abs', 'log_abs', 'abs', 'neg']
-        
+
         current_op = node.operator
-        
+
         # Physics-biased mutation with higher probabilities for critical operators
-        if current_op in trig_ops and random.random() < 0.8:
-            new_ops = [op for op in trig_ops if op != current_op]
-            if new_ops:
-                node.operator = random.choice(new_ops)
-                return True
-        elif current_op in exp_log_ops and random.random() < 0.7:
-            new_ops = [op for op in exp_log_ops if op != current_op]
-            if new_ops:
-                node.operator = random.choice(new_ops)
-                return True
-        elif current_op in power_ops and random.random() < 0.8:
-            new_ops = [op for op in power_ops if op != current_op]
-            if new_ops:
-                node.operator = random.choice(new_ops)
-                return True
-        elif current_op in reciprocal_ops and random.random() < 0.9:  # High preservation for physics
-            new_ops = [op for op in reciprocal_ops if op != current_op]
-            if new_ops:
-                node.operator = random.choice(new_ops)
-                return True
-        elif current_op in hyperbolic_ops and random.random() < 0.7:
-            new_ops = [op for op in hyperbolic_ops if op != current_op]
-            if new_ops:
-                node.operator = random.choice(new_ops)
-                return True
-        elif current_op in safe_ops and random.random() < 0.6:
-            new_ops = [op for op in safe_ops if op != current_op]
-            if new_ops:
-                node.operator = random.choice(new_ops)
-                return True
-        else:
-            # Cross-group mutation with physics bias towards reciprocal operations
-            all_ops = trig_ops + exp_log_ops + power_ops + reciprocal_ops + hyperbolic_ops + safe_ops
-            new_ops = [op for op in all_ops if op != current_op]
-            if new_ops:
-                # Bias towards reciprocal operations for physics laws
-                if random.random() < 0.3:  # 30% chance to choose reciprocal
-                    physics_critical = reciprocal_ops + ['sqrt', 'square', 'log_abs']
-                    available_critical = [op for op in physics_critical if op != current_op]
-                    if available_critical:
-                        node.operator = random.choice(available_critical)
-                        return True
-                
-                node.operator = random.choice(new_ops)
-                return True
+        if current_op in trig_ops:
+            if random.random() < 0.8:
+                new_ops = [op for op in trig_ops if op != current_op]
+                if new_ops:
+                    node.operator = random.choice(new_ops)
+                    return True
+        elif current_op in exp_log_ops:
+            if random.random() < 0.7:
+                new_ops = [op for op in exp_log_ops if op != current_op]
+                if new_ops:
+                    node.operator = random.choice(new_ops)
+                    return True
+        elif current_op in power_ops:
+            if random.random() < 0.8:
+                new_ops = [op for op in power_ops if op != current_op]
+                if new_ops:
+                    node.operator = random.choice(new_ops)
+                    return True
+        elif current_op in reciprocal_ops:
+            if random.random() < 0.9:  # High preservation for physics
+                new_ops = [op for op in reciprocal_ops if op != current_op]
+                if new_ops:
+                    node.operator = random.choice(new_ops)
+                    return True
+        elif current_op in hyperbolic_ops:
+            if random.random() < 0.7:
+                new_ops = [op for op in hyperbolic_ops if op != current_op]
+                if new_ops:
+                    node.operator = random.choice(new_ops)
+                    return True
+        elif current_op in safe_ops:
+            if random.random() < 0.6:
+                new_ops = [op for op in safe_ops if op != current_op]
+                if new_ops:
+                    node.operator = random.choice(new_ops)
+                    return True
+
+        # Cross-group mutation with physics bias towards reciprocal operations
+        all_ops = trig_ops + exp_log_ops + power_ops + reciprocal_ops + hyperbolic_ops + safe_ops
+        new_ops = [op for op in all_ops if op != current_op]
+        if new_ops:
+            # Bias towards reciprocal operations for physics laws
+            if random.random() < 0.3:  # 30% chance to choose reciprocal
+                physics_critical = reciprocal_ops + ['sqrt', 'square', 'log_abs']
+                available_critical = [op for op in physics_critical if op != current_op]
+                if available_critical:
+                    node.operator = random.choice(available_critical)
+                    return True
+
+            node.operator = random.choice(new_ops)
+            return True
         return False
     
     def semantic_preserving_mutation(self, expression: Expression, rate: float,
@@ -309,7 +315,7 @@ class MutationStrategies:
                 elif isinstance(node, UnaryOpNode):
                     # Change unary operator
                     old_op = node.operator
-                    node.operator = random.choice(['sin', 'cos', 'exp', 'log', 'sqrt'])
+                    node.operator = random.choice(['sin', 'cos', 'exp', 'expm1', 'log', 'log1p', 'sqrt'])
                     if node.operator != old_op:
                         changed = True
                 elif isinstance(node, ScalingOpNode):

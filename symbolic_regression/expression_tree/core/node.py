@@ -49,6 +49,8 @@ COMPLEXITY_WEIGHTS: Dict[str, float] = {
   'sinh': 1.5,
   'cosh': 1.5,
   'tanh': 1.4,  # Bounded, so slightly simpler
+  'log1p': 1.5,
+  'expm1': 1.7,
 
   # Terminal nodes
   'variable': 1.0,
@@ -392,8 +394,12 @@ class UnaryOpNode(Node):
       return sp.sqrt(operand_sympy)
     elif self.operator == 'log':
       return sp.log(operand_sympy)
+    elif self.operator == 'log1p':
+      return sp.log(sp.Integer(1) + operand_sympy)
     elif self.operator == 'exp':
       return sp.exp(operand_sympy)
+    elif self.operator == 'expm1':
+      return sp.exp(operand_sympy) - sp.Integer(1)
     elif self.operator == 'abs':
       return sp.Abs(operand_sympy)
     elif self.operator == 'neg':

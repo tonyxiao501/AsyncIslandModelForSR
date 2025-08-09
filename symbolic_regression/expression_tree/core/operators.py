@@ -37,18 +37,21 @@ class OpType(IntEnum):
   COSH = 22
   TANH = 23
   SCALE = 24  # Scaling operation
+  LOG1P = 25
+  EXPM1 = 26
 
 # Mapping dictionaries
 BINARY_OP_MAP = {'+': OpType.ADD, '-': OpType.SUB, '*': OpType.MUL, '/': OpType.DIV, '^': OpType.POW}
 UNARY_OP_MAP = {
     'sin': OpType.SIN, 'cos': OpType.COS, 'tan': OpType.TAN,
-    'exp': OpType.EXP, 'log': OpType.LOG, 'sqrt': OpType.SQRT,
+  'exp': OpType.EXP, 'log': OpType.LOG, 'sqrt': OpType.SQRT,
     'abs': OpType.ABS, 'square': OpType.SQUARE, 'cube': OpType.CUBE,
     'reciprocal': OpType.RECIPROCAL, 'neg': OpType.NEG,
     'sqrt_abs': OpType.SQRT_ABS, 'log_abs': OpType.LOG_ABS,
     'inv_square': OpType.INV_SQUARE, 'cbrt': OpType.CBRT,
     'fourth_root': OpType.FOURTH_ROOT, 'sinh': OpType.SINH,
-    'cosh': OpType.COSH, 'tanh': OpType.TANH
+  'cosh': OpType.COSH, 'tanh': OpType.TANH,
+  'log1p': OpType.LOG1P, 'expm1': OpType.EXPM1
 }
 
 # Scaling operation mapping
@@ -93,6 +96,11 @@ def evaluate_unary_op(operand_val, operator):
     return np.exp(np.clip(operand_val, -10, 10))
   elif operator == 'log':
     return np.log(np.abs(operand_val) + 1e-8)
+  elif operator == 'log1p':
+    # Safe log1p: ensure argument > -1
+    return np.log1p(np.clip(operand_val, -1 + 1e-12, 1e12))
+  elif operator == 'expm1':
+    return np.expm1(np.clip(operand_val, -10, 10))
   elif operator == 'sqrt':
     return np.sqrt(np.abs(operand_val))
   elif operator == 'abs':
@@ -161,6 +169,11 @@ def evaluate_unary_op_fast(operand_val, op_type):
     return np.exp(clipped)
   elif op_type == OpType.LOG:
     return np.log(np.abs(operand_val) + 1e-12)
+  elif op_type == OpType.LOG1P:
+    return np.log1p(np.clip(operand_val, -1 + 1e-12, 1e12))
+  elif op_type == OpType.EXPM1:
+    clipped = np.clip(operand_val, -10.0, 10.0)
+    return np.expm1(clipped)
   elif op_type == OpType.SQRT:
     return np.sqrt(np.abs(operand_val))
   elif op_type == OpType.ABS:

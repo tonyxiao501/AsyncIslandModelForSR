@@ -84,9 +84,22 @@ class PopulationManager:
             
             # More strict validation for finite values and reasonable magnitude
             is_finite = np.all(np.isfinite(result))
-            is_reasonable = np.max(np.abs(result)) < 1e8  # Reduced from 1e10
-            has_variation = np.std(result) > 1e-10  # Ensure some variation in output
-            
+            # Compute magnitude first to avoid overflow in std for huge values
+            try:
+                max_abs = float(np.max(np.abs(result))) if is_finite else float('inf')
+            except Exception:
+                max_abs = float('inf')
+            is_reasonable = max_abs < 1e8  # Reduced from 1e10
+
+            # Only compute std if values are finite and within a reasonable magnitude
+            if is_finite and is_reasonable:
+                # Clip to a safe range to avoid overflow in variance computation
+                res_clip = np.clip(result, -1e6, 1e6)
+                with np.errstate(over='ignore', invalid='ignore'):
+                    has_variation = np.std(res_clip) > 1e-10  # Ensure some variation in output
+            else:
+                has_variation = False
+
             is_valid = bool(is_finite and is_reasonable and has_variation)
             self._validation_cache[expr_str] = is_valid
             return is_valid

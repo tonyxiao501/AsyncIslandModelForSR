@@ -303,6 +303,30 @@ class Expression:
       if func_name in UNARY_OP_MAP:
         operand = Expression._sympy_to_node(sympy_expr.args[0], n_inputs)
         return UnaryOpNode(func_name, operand)
+    # Map special forms: log(1+x) -> log1p(x), exp(x)-1 -> expm1(x)
+    try:
+      if isinstance(sympy_expr, sp.log) and len(sympy_expr.args) == 1:
+        arg = sympy_expr.args[0]
+        if isinstance(arg, sp.Add):
+          # Check for 1 + something
+          for term in arg.args:
+            if term == 1 or term == sp.Integer(1):
+              other_terms = [t for t in arg.args if t != term]
+              if other_terms:
+                operand = Expression._sympy_to_node(other_terms[0], n_inputs)
+                return UnaryOpNode('log1p', operand)
+      if isinstance(sympy_expr, sp.Add) and len(sympy_expr.args) == 2:
+        # exp(x) - 1 pattern
+        a, b = sympy_expr.args
+        if a.is_Pow or ('exp' in str(type(a)).lower()):
+          if b == -1 or b == sp.Integer(-1):
+            # a - 1, where a is exp(x)
+            if hasattr(a, 'args') and len(a.args) >= 1:
+              inner = a.args[0]
+              operand = Expression._sympy_to_node(inner, n_inputs)
+              return UnaryOpNode('expm1', operand)
+    except Exception:
+      pass
     
     if isinstance(sympy_expr, sp.Pow) and sympy_expr.args[1] == sp.Rational(1, 2):
       operand = Expression._sympy_to_node(sympy_expr.args[0], n_inputs)

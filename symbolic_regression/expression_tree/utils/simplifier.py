@@ -34,6 +34,11 @@ class ExpressionSimplifier:
           (node.operator == 'exp' and isinstance(operand, UnaryOpNode) and operand.operator == 'log')):
         return True
 
+      # log1p(expm1(x)) and expm1(log1p(x)) approximately cancel for small x
+      if ((node.operator == 'log1p' and isinstance(operand, UnaryOpNode) and operand.operator == 'expm1') or
+          (node.operator == 'expm1' and isinstance(operand, UnaryOpNode) and operand.operator == 'log1p')):
+        return True
+
       if (node.operator == 'sqrt' and isinstance(operand, UnaryOpNode) and operand.operator == 'sqrt'):
         return True
 

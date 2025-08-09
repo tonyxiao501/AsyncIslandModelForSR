@@ -116,15 +116,34 @@ def optimize_constants(X: np.ndarray, y: np.ndarray, population: List[Expression
         
         expr_vec = expr.vector_lambdify()
         if expr_vec is not None:
+            consts = expr.get_constants()
+            if len(consts) == 0:
+                continue
+            # Build a safe wrapper to ensure 1-D float output and bounded values
+            def safe_expr_vec(Xin, *params):
+                try:
+                    if expr_vec is None:
+                        raise RuntimeError("expr_vec is None")
+                    out = expr_vec(Xin, *params)
+                except Exception:
+                    # Return large constant to signal bad fit but keep shape
+                    n = np.asarray(Xin).shape[0]
+                    return np.full(n, 1e6, dtype=float)
+                out = np.asarray(out, dtype=float).reshape(-1)
+                # Sanitize to avoid NaN/Inf and huge magnitudes
+                out = np.nan_to_num(out, nan=0.0, posinf=1e6, neginf=-1e6)
+                return np.clip(out, -1e6, 1e6)
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("error", OptimizeWarning)
-                    popt, pcov = curve_fit(expr_vec, X, y, expr.get_constants())
+                    y_flat = np.asarray(y, dtype=float).reshape(-1)
+                    # Bounded optimization to keep constants in a reasonable range
+                    bounds = (-100.0 * np.ones(len(consts)), 100.0 * np.ones(len(consts)))
+                    popt, pcov = curve_fit(safe_expr_vec, X, y_flat, consts, bounds=bounds, maxfev=2000)
                     expr.set_constants(popt)
-                    
                     # Cache successful optimization
                     _OPTIMIZATION_CACHE[cache_key] = (list(popt), time.time())
-            except OptimizeWarning:
+            except (OptimizeWarning, Exception):
                 pass  # failed to optimize
 
 
@@ -145,13 +164,28 @@ def optimize_final_expressions(expressions: List[Expression], X: np.ndarray, y: 
         # Apply constant optimization
         expr_vec = optimized_expr.vector_lambdify()
         if expr_vec is not None:
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("error", OptimizeWarning)
-                    popt, pcov = curve_fit(expr_vec, X, y, optimized_expr.get_constants())
-                    optimized_expr.set_constants(popt)
-            except (OptimizeWarning, Exception):
-                pass  # Keep original if optimization fails
+            consts = optimized_expr.get_constants()
+            if len(consts) > 0:
+                def safe_expr_vec(Xin, *params):
+                    try:
+                        if expr_vec is None:
+                            raise RuntimeError("expr_vec is None")
+                        out = expr_vec(Xin, *params)
+                    except Exception:
+                        n = np.asarray(Xin).shape[0]
+                        return np.full(n, 1e6, dtype=float)
+                    out = np.asarray(out, dtype=float).reshape(-1)
+                    out = np.nan_to_num(out, nan=0.0, posinf=1e6, neginf=-1e6)
+                    return np.clip(out, -1e6, 1e6)
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("error", OptimizeWarning)
+                        y_flat = np.asarray(y, dtype=float).reshape(-1)
+                        bounds = (-100.0 * np.ones(len(consts)), 100.0 * np.ones(len(consts)))
+                        popt, pcov = curve_fit(safe_expr_vec, X, y_flat, consts, bounds=bounds, maxfev=2000)
+                        optimized_expr.set_constants(popt)
+                except (OptimizeWarning, Exception):
+                    pass  # Keep original if optimization fails
         
         optimized_expressions.append(optimized_expr)
     
@@ -167,16 +201,21 @@ def evaluate_optimized_expressions(expressions: List[Expression], X: np.ndarray,
     for expr in expressions:
         try:
             predictions = expr.evaluate(X)
+            predictions = np.asarray(predictions, dtype=float)
             if predictions.ndim == 1:
                 predictions = predictions.reshape(-1, 1)
+            # Sanitize predictions to avoid NaN/Inf during scoring
+            predictions = np.nan_to_num(predictions, nan=0.0, posinf=1e6, neginf=-1e6)
+            predictions = np.clip(predictions, -1e6, 1e6)
                 
             # Calculate R² score using scikit-learn
             try:
-                r2 = r2_score(y.flatten(), predictions.flatten())
+                r2 = r2_score(np.asarray(y, dtype=float).flatten(), predictions.flatten())
             except Exception:
                 # Fallback calculation for edge cases
-                ss_res = np.sum((y - predictions) ** 2)
-                ss_tot = np.sum((y - np.mean(y)) ** 2)
+                yf = np.asarray(y, dtype=float)
+                ss_res = np.sum((yf - predictions) ** 2)
+                ss_tot = np.sum((yf - np.mean(yf)) ** 2)
                 if ss_tot == 0:
                     r2 = 1.0 if ss_res == 0 else 0.0
                 else:
@@ -250,7 +289,11 @@ def calculate_subtree_qualities(expression: Expression, X: np.ndarray, residuals
     for node in nodes:
         try:
             subtree_output = node.evaluate(X)
-            
+            # Sanitize to avoid overflow in std/corr computations
+            subtree_output = np.asarray(subtree_output, dtype=float)
+            subtree_output = np.nan_to_num(subtree_output, nan=0.0, posinf=1e6, neginf=-1e6)
+            subtree_output = np.clip(subtree_output, -1e6, 1e6)
+
             if np.std(subtree_output) < 1e-6 or np.any(~np.isfinite(subtree_output)):
                 qualities[node] = 0.0
                 continue
@@ -273,21 +316,29 @@ def assess_expression_quality(expression: Expression, X: np.ndarray, y: np.ndarr
     """Comprehensive quality assessment of an expression"""
     try:
         predictions = expression.evaluate(X)
-        
+        predictions = np.asarray(predictions, dtype=float)
+        if predictions.ndim == 1:
+            predictions = predictions.reshape(-1, 1)
+        # Sanitize predictions to avoid NaN/Inf and huge magnitudes
+        predictions = np.nan_to_num(predictions, nan=0.0, posinf=1e6, neginf=-1e6)
+        predictions = np.clip(predictions, -1e6, 1e6)
+
         # Calculate basic metrics
         r2 = r2_score(y.flatten(), predictions.flatten())
-        rmse = np.sqrt(np.mean((y - predictions) ** 2))
+        # Clip y as well to avoid overflow in subtraction/square
+        y_clip = np.clip(y, -1e6, 1e6)
+        rmse = np.sqrt(np.mean((y_clip - predictions) ** 2))
         complexity = expression.complexity()
         size = expression.size()
-        
+
         # Calculate residuals for subtree analysis
-        residuals = y.flatten() - predictions.flatten()
+        residuals = y_clip.flatten() - predictions.flatten()
         subtree_qualities = calculate_subtree_qualities(expression, X, residuals)
-        
+
         # Overall quality score (weighted combination)
         parsimony_score = 1.0 / (1.0 + complexity * 0.01)
         quality_score = r2 * 0.7 + parsimony_score * 0.3
-        
+
         if return_detailed:
             return {
                 'quality_score': quality_score,
@@ -301,7 +352,7 @@ def assess_expression_quality(expression: Expression, X: np.ndarray, y: np.ndarr
             }
         else:
             return quality_score
-            
+
     except Exception:
         if return_detailed:
             return {

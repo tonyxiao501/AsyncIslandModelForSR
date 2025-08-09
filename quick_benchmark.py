@@ -96,10 +96,16 @@ def run_single_problem(problem_key: str):
     """Run a single specific problem."""
     suite = StandardBenchmarkSuite()
     
+    # Allow case-insensitive matching of problem keys
     if problem_key not in suite.problems:
-        print(f"❌ Problem '{problem_key}' not found!")
-        print(f"Available problems: {list(suite.problems.keys())}")
-        return
+        lower_map = {k.lower(): k for k in suite.problems.keys()}
+        mapped = lower_map.get(problem_key.lower())
+        if mapped is not None:
+            problem_key = mapped
+        else:
+            print(f"❌ Problem '{problem_key}' not found!")
+            print(f"Available problems: {list(suite.problems.keys())}")
+            return
     
     print(f"🎯 RUNNING SINGLE PROBLEM: {problem_key}")
     print("="*60)

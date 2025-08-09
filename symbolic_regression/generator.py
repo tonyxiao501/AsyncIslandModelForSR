@@ -15,8 +15,8 @@ class ExpressionGenerator:
     self.scaling_range = scaling_range
     # Enhanced unary operations for physics laws
     self.unary_ops = [
-        'sin', 'cos', 'tan',           # Trigonometric functions
-        'exp', 'log',                  # Exponential and logarithmic
+  'sin', 'cos', 'tan',           # Trigonometric functions
+  'exp', 'log', 'log1p', 'expm1',# Exponential and logarithmic (+ stable variants)
         'sqrt',                        # Square root
         'abs',                         # Absolute value
         'square', 'cube',              # Basic powers
@@ -36,8 +36,8 @@ class ExpressionGenerator:
         'inv_square': 3.0,      # Critical for inverse square laws
         'sqrt': 2.5,            # Important for many physics relations
         'square': 2.5,          # Important for energy laws
-        'log': 2.0,             # Important for exponential phenomena
-        'exp': 2.0,             # Important for decay/growth
+  'log': 2.0, 'log1p': 2.2, # Stable log for positive domains
+  'exp': 2.0, 'expm1': 2.0, # Stable exp for small values
         'abs': 2.0,             # Safe operations
         'sqrt_abs': 2.0,        # Safe square root
         'log_abs': 2.0,         # Safe logarithm
@@ -91,7 +91,7 @@ class ExpressionGenerator:
 
     # Function nodes with reduced complexity
     if depth < max_depth - 1:
-      node_type = random.choices(['binary', 'unary', 'scale'], weights=[0.7, 0.2, 0.1])[0]
+      node_type = random.choices(['binary', 'unary', 'scale'], weights=[0.65, 0.25, 0.1])[0]
 
       if node_type == 'binary':
         op = random.choice(self.binary_ops)
@@ -109,6 +109,14 @@ class ExpressionGenerator:
           else:
             op = random.choice(self.unary_ops)
           operand = self._generate_node(depth + 1, max_depth)
+          # Heuristic: for exp/log/log1p, wrap operand as affine a*x+b to ease fitting
+          if op in ['exp', 'expm1', 'log', 'log1p'] and random.random() < 0.5 and depth < max_depth - 3:
+            a = ConstantNode(random.uniform(0.5, 2.0))
+            b = ConstantNode(random.uniform(-2.0, 2.0))
+            x = operand
+            ax = BinaryOpNode('*', a, x)
+            axb = BinaryOpNode('+', ax, b)
+            operand = axb
           return UnaryOpNode(op, operand)
           
       elif node_type == 'scale':

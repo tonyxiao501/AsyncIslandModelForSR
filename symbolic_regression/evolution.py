@@ -325,7 +325,13 @@ class EvolutionEngine:
             try:
                 # Evaluate on scaled data
                 predictions = expr.evaluate(X_scaled)
-                
+                # Sanitize predictions to reduce numerical warnings
+                predictions = np.asarray(predictions, dtype=float)
+                if predictions.ndim == 1:
+                    predictions = predictions.reshape(-1, 1)
+                predictions = np.nan_to_num(predictions, nan=0.0, posinf=1e6, neginf=-1e6)
+                predictions = np.clip(predictions, -1e6, 1e6)
+
                 # Calculate R² score
                 from .data_processing import r2_score
                 r2 = r2_score(y_scaled.flatten(), predictions.flatten())
