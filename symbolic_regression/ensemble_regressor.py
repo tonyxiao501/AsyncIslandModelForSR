@@ -16,6 +16,7 @@ import os
 import tempfile
 import pickle
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional, TYPE_CHECKING, Tuple, Any
 from .expression_tree import Expression
 from .regressor import MIMOSymbolicRegressor
@@ -244,81 +245,165 @@ def island_worker_process(args):
 def asynchronous_island_worker_process(args) -> List[Dict[str, Any]]:
     """
     Enhanced asynchronous island worker with island-specific cache system.
-    
-    This worker implements the new asynchronous migration approach where each island
-    maintains its own cache that others can read from, eliminating topology issues.
+    Each island evolves independently and uses an island cache plus optional
+    file-backed exchange to asynchronously share/import expressions.
     """
-    (island_id, regressor_params, X, y, total_generations, cache_manager_data, 
-     topology_data, migration_timer_params) = args
-    
+    (island_id, regressor_params, X, y, total_generations, cache_manager_data,
+     topology_data, migration_timer_params, shared_dir) = args
     try:
-        # Set unique seed for this island
+        # Seed per-process RNGs
         island_seed = hash((island_id, time.time())) % 2**32
         random.seed(island_seed)
         np.random.seed(island_seed % 2**32)
-        
-        # Initialize asynchronous components
+
+        # Timer for Poisson-timed events
         migration_timer = PoissonMigrationTimer(**migration_timer_params)
-        
-        # Create regressor with unique parameters for diversity
+
+        # Prepare regressor params
         params = regressor_params.copy()
         params['console_log'] = False
-        
-        # Remove parameters not supported by MIMOSymbolicRegressor
-        unsupported_params = [
-            'purge_percentage', 'exchange_interval', 'import_percentage', 
-            'enable_inter_thread_communication',
-            'enable_data_scaling', 'use_multi_scale_fitness'
-        ]
-        for param in unsupported_params:
+        for param in ['purge_percentage', 'exchange_interval', 'import_percentage',
+                      'enable_inter_thread_communication', 'enable_data_scaling', 'use_multi_scale_fitness']:
             params.pop(param, None)
-        
-        # Add parameter diversity for island differentiation
-        params['mutation_rate'] *= random.uniform(0.8, 1.2)
-        params['crossover_rate'] *= random.uniform(0.9, 1.1)
-        params['population_size'] = int(params['population_size'] * random.uniform(0.9, 1.1))
-        params['parsimony_coefficient'] *= random.uniform(0.5, 2.0)
-        
-        # Keep the full generations for proper island evolution!
-        # The original bug was: params['generations'] = 1
-        # This forces each regressor to run the complete evolution cycle
+
+        # Add island diversification
+        if 'mutation_rate' in params:
+            params['mutation_rate'] *= random.uniform(0.8, 1.2)
+        if 'crossover_rate' in params:
+            params['crossover_rate'] *= random.uniform(0.9, 1.1)
+        if 'population_size' in params:
+            params['population_size'] = int(params['population_size'] * random.uniform(0.9, 1.1))
+        if 'parsimony_coefficient' in params:
+            params['parsimony_coefficient'] *= random.uniform(0.5, 2.0)
         params['generations'] = total_generations
-        
+
         regressor = MIMOSymbolicRegressor(**params)
-        
-        # Initialize shared cache manager (each process needs its own instance)
+
+        # Create topology and cache manager
         topology = EnhancedIslandTopology(topology_data['n_islands'], topology_data['migration_prob'])
         topology.connections = topology_data['connections']
-        
         cache_manager = AsynchronousIslandCacheManager(cache_manager_data['n_islands'], topology)
-        
-        # Run the complete evolution for this island
-        # This is the proper island model - each island evolves independently
+        try:
+            if isinstance(shared_dir, str) and shared_dir:
+                cache_manager.set_shared_dir(shared_dir)
+        except Exception:
+            pass
+        try:
+            cache_manager.seed_all_caches(X.shape[1])
+        except Exception:
+            pass
+
+        # Enable async migration context and run
+        try:
+            regressor.enable_async_island_migration(cache_manager, island_id, migration_timer)
+        except Exception:
+            pass
+
         regressor.fit(X, y, constant_optimize=False)
-        
-        # Collect results from the completed evolution
+
+        # Collect island results
         all_results: List[Dict[str, Any]] = []
-        
-        if regressor.best_expressions:
-            best_fitness = max(regressor.fitness_history) if regressor.fitness_history else 0.0
+        if getattr(regressor, 'best_expressions', None):
+            best_fitness = max(getattr(regressor, 'fitness_history', []) or [0.0])
             for i, expr in enumerate(regressor.best_expressions[:3]):
-                all_results.append({
+                rec: Dict[str, Any] = {
                     'expression_obj': expr.copy(),
                     'expression_str': expr.to_string(),
-                    'fitness': best_fitness - i * 0.001,  # Small penalty for ranking
+                    'fitness': best_fitness - i * 0.001,
                     'island_id': island_id,
-                    'generation': total_generations,  # Final generation
-                    'complexity': expr.complexity()
-                })
-        
-        # Return the best results from this island
+                    'generation': total_generations,
+                    'complexity': expr.complexity(),
+                }
+                if i == 0:
+                    try:
+                        rec['_async_stats'] = regressor.get_async_migration_stats()
+                    except Exception:
+                        pass
+                all_results.append(rec)
+
         if all_results:
             all_results.sort(key=lambda x: x['fitness'], reverse=True)
-            return all_results[:5]  # Top 5 from this island
-        else:
-            return []
+            return all_results[:5]
+        return []
+
     except Exception as e:
         print(f"Error in asynchronous island {island_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+def asynchronous_island_thread_worker(args) -> List[Dict[str, Any]]:
+    """
+    Thread-based asynchronous island worker that shares a common in-memory cache
+    manager across islands to avoid file I/O completely. This is faster on a
+    single machine and leverages thread-safe locks in the cache.
+    """
+    (island_id, regressor_params, X, y, total_generations,
+     shared_cache_manager, shared_topology, migration_timer_params) = args
+    try:
+        # Per-thread RNG seeding
+        island_seed = hash((island_id, time.time())) % 2**32
+        random.seed(island_seed)
+        np.random.seed(island_seed % 2**32)
+
+        # Prepare regressor params
+        params = regressor_params.copy()
+        params['console_log'] = False
+        for param in ['purge_percentage', 'exchange_interval', 'import_percentage',
+                      'enable_inter_thread_communication', 'enable_data_scaling', 'use_multi_scale_fitness']:
+            params.pop(param, None)
+
+        # Add island diversification
+        if 'mutation_rate' in params:
+            params['mutation_rate'] *= random.uniform(0.8, 1.2)
+        if 'crossover_rate' in params:
+            params['crossover_rate'] *= random.uniform(0.9, 1.1)
+        if 'population_size' in params:
+            params['population_size'] = int(params['population_size'] * random.uniform(0.9, 1.1))
+        if 'parsimony_coefficient' in params:
+            params['parsimony_coefficient'] *= random.uniform(0.5, 2.0)
+        params['generations'] = total_generations
+
+        regressor = MIMOSymbolicRegressor(**params)
+
+        # Use shared topology and cache manager
+        cache_manager = shared_cache_manager
+        migration_timer = PoissonMigrationTimer(**migration_timer_params)
+
+        try:
+            regressor.enable_async_island_migration(cache_manager, island_id, migration_timer)
+        except Exception:
+            pass
+
+        regressor.fit(X, y, constant_optimize=False)
+
+        # Collect island results
+        all_results: List[Dict[str, Any]] = []
+        if getattr(regressor, 'best_expressions', None):
+            best_fitness = max(getattr(regressor, 'fitness_history', []) or [0.0])
+            for i, expr in enumerate(regressor.best_expressions[:3]):
+                rec: Dict[str, Any] = {
+                    'expression_obj': expr.copy(),
+                    'expression_str': expr.to_string(),
+                    'fitness': best_fitness - i * 0.001,
+                    'island_id': island_id,
+                    'generation': total_generations,
+                    'complexity': expr.complexity(),
+                }
+                if i == 0:
+                    try:
+                        rec['_async_stats'] = regressor.get_async_migration_stats()
+                    except Exception:
+                        pass
+                all_results.append(rec)
+
+        if all_results:
+            all_results.sort(key=lambda x: x['fitness'], reverse=True)
+            return all_results[:5]
+        return []
+
+    except Exception as e:
+        print(f"Error in asynchronous thread island {island_id}: {e}")
         import traceback
         traceback.print_exc()
         return []
@@ -387,9 +472,6 @@ class EnsembleMIMORegressor:
     def fit(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False):
         """
         Fits multiple regressors using island model evolution with migration.
-        
-        Each island evolves independently but exchanges best individuals periodically.
-        This mimics PySR's population-based approach but with multiple islands.
         """
         if self.use_asynchronous_migration:
             return self._fit_asynchronous(X, y, constant_optimize)
@@ -400,122 +482,159 @@ class EnsembleMIMORegressor:
         """Asynchronous island model with island-specific caches"""
         print(f"Starting asynchronous island model ensemble with {self.n_fits} islands...")
         print(f"Using island-specific cache system with Poisson migration timing...")
-        
+
         # Validate inputs
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
-        
         if X.ndim == 1:
             X = X.reshape(-1, 1)
         if y.ndim == 1:
             y = y.reshape(-1, 1)
-        
-        # Create enhanced topology with connectivity guarantees
+
+        # Create topology and worker kwargs
         topology = EnhancedIslandTopology(self.n_fits, self.migration_probability)
-        
-        # Create shared cache manager
-        cache_manager = AsynchronousIslandCacheManager(self.n_fits, topology)
-        
-        # Seed all caches with diverse initial expressions
-        cache_manager.seed_all_caches(X.shape[1])
-        
-        # Prepare worker configurations
         worker_kwargs = self.regressor_kwargs.copy()
         worker_kwargs['console_log'] = False
-        
-        # Migration timer parameters
+
+        # Migration timer parameters (rarer events by default)
         migration_timer_params = {
-            'average_interval': self.migration_interval,
-            'min_generation': 10
+            'average_interval': max(20, int(self.migration_interval * 3)),
+            'min_generation': max(25, int(self.migration_interval * 3))
         }
-        
-        # Prepare serializable data for worker processes
-        topology_data = {
-            'n_islands': self.n_fits,
-            'migration_prob': self.migration_probability,
-            'connections': topology.connections
-        }
-        
-        cache_manager_data = {
-            'n_islands': self.n_fits
-        }
-        
-        configs = []
-        for i in range(self.n_fits):
-            # Add parameter diversity between islands
-            island_kwargs = worker_kwargs.copy()
-            island_kwargs['mutation_rate'] = worker_kwargs.get('mutation_rate', 0.1) * random.uniform(0.8, 1.2)
-            island_kwargs['parsimony_coefficient'] = worker_kwargs.get('parsimony_coefficient', 0.001) * random.uniform(0.5, 2.0)
-            
-            config = (i, island_kwargs, X, y, worker_kwargs.get('generations', 200), 
-                     cache_manager_data, topology_data, migration_timer_params)
-            configs.append(config)
-        
-        # Run asynchronous island evolution in parallel
-        with multiprocessing.Pool(processes=self.n_fits, maxtasksperchild=1) as pool:
-            results = pool.map(asynchronous_island_worker_process, configs)
-        
-        print("All asynchronous island evolutions completed. Aggregating results...")
-        
-        # Aggregate results from all islands
-        all_island_results = []
-        for island_results in results:
-            if island_results:
-                all_island_results.extend(island_results)
-        
+
+        # Backend selection
+        use_threads = False
+        all_island_results: List[Dict[str, Any]] = []
+        island_async_stats: List[Dict[str, Any]] = []
+
+        if use_threads:
+            shared_cache_manager = AsynchronousIslandCacheManager(self.n_fits, topology)
+            try:
+                shared_cache_manager.seed_all_caches(X.shape[1])
+            except Exception:
+                pass
+
+            thread_configs = []
+            for i in range(self.n_fits):
+                island_kwargs = worker_kwargs.copy()
+                island_kwargs['mutation_rate'] = worker_kwargs.get('mutation_rate', 0.1) * random.uniform(0.8, 1.2)
+                island_kwargs['parsimony_coefficient'] = worker_kwargs.get('parsimony_coefficient', 0.001) * random.uniform(0.5, 2.0)
+                thread_configs.append((i, island_kwargs, X, y, worker_kwargs.get('generations', 200),
+                                       shared_cache_manager, topology, migration_timer_params))
+
+            with ThreadPoolExecutor(max_workers=self.n_fits) as executor:
+                futures = [executor.submit(asynchronous_island_thread_worker, cfg) for cfg in thread_configs]
+                for fut in as_completed(futures):
+                    island_results = fut.result()
+                    if island_results:
+                        all_island_results.extend(island_results)
+                        for rec in island_results:
+                            stats = rec.get('_async_stats') if isinstance(rec, dict) else None
+                            if stats:
+                                island_async_stats.append({'island_id': rec.get('island_id'), **stats})
+                                break
+            print("All asynchronous island evolutions completed. Aggregating results...")
+        else:
+            # Process-based execution with file-backed shared_dir
+            try:
+                import os
+                shm_base = '/dev/shm' if os.path.isdir('/dev/shm') else None
+                if shm_base:
+                    shared_dir = tempfile.mkdtemp(prefix="async_islands_", dir=shm_base)
+                else:
+                    shared_dir = tempfile.mkdtemp(prefix="async_islands_")
+            except Exception:
+                shared_dir = tempfile.mkdtemp(prefix="async_islands_")
+
+            topology_data = {
+                'n_islands': self.n_fits,
+                'migration_prob': self.migration_probability,
+                'connections': topology.connections,
+            }
+            cache_manager_data = {'n_islands': self.n_fits}
+
+            configs = []
+            for i in range(self.n_fits):
+                island_kwargs = worker_kwargs.copy()
+                island_kwargs['mutation_rate'] = worker_kwargs.get('mutation_rate', 0.1) * random.uniform(0.8, 1.2)
+                island_kwargs['parsimony_coefficient'] = worker_kwargs.get('parsimony_coefficient', 0.001) * random.uniform(0.5, 2.0)
+                configs.append((i, island_kwargs, X, y, worker_kwargs.get('generations', 200),
+                                cache_manager_data, topology_data, migration_timer_params, shared_dir))
+
+            try:
+                with multiprocessing.Pool(processes=self.n_fits, maxtasksperchild=1) as pool:
+                    results = pool.map(asynchronous_island_worker_process, configs)
+                for island_results in results:
+                    if island_results:
+                        all_island_results.extend(island_results)
+                        for rec in island_results:
+                            stats = rec.get('_async_stats') if isinstance(rec, dict) else None
+                            if stats:
+                                island_async_stats.append({'island_id': rec.get('island_id'), **stats})
+                                break
+            finally:
+                import shutil
+                try:
+                    shutil.rmtree(shared_dir)
+                except Exception:
+                    pass
+            print("All asynchronous island evolutions completed. Aggregating results...")
+
+        # Print migration summary
+        if island_async_stats:
+            agg = {'shared': 0, 'exports': 0, 'received_candidates': 0, 'file_candidates': 0, 'rebuilt': 0, 'injected': 0, 'send_events': 0, 'receive_events': 0}
+            for s in island_async_stats:
+                for k in agg:
+                    agg[k] += int(s.get(k, 0))
+            try:
+                print("\nAsync migration summary:")
+                print("  Islands with stats:", len(island_async_stats))
+                print("  Shared:", agg['shared'], "Exports:", agg['exports'],
+                      "Received:", agg['received_candidates'], "FileRecv:", agg['file_candidates'],
+                      "Rebuilt:", agg['rebuilt'], "Injected:", agg['injected'],
+                      "SendEvents:", agg['send_events'], "RecvEvents:", agg['receive_events'])
+            except Exception:
+                pass
+
         if not all_island_results:
             print("\nWarning: No valid expressions found across all islands. The model is not fitted.")
             return
-        
-        # Sort all results by fitness
+
+        # Sort by fitness and pick top
         all_island_results.sort(key=lambda x: x['fitness'], reverse=True)
-        
-        # Select top results
         top_results = all_island_results[:self.top_n_select]
-        
-        # Apply final optimizations
+
+        # Final optimization
         print(f"\nApplying final optimizations to top {len(top_results)} candidate expressions...")
         start_time = time.time()
-        
         candidate_expressions = [res['expression_obj'] for res in top_results]
-        
-        # Apply final optimizations
         parsimony_coeff = self.regressor_kwargs.get('parsimony_coefficient', 0.01)
-        
         optimized_expressions = optimize_final_expressions(candidate_expressions, X, y)
         optimized_fitness_scores = evaluate_optimized_expressions(optimized_expressions, X, y, parsimony_coeff)
-        
-        # Update results with optimized fitness scores
+
         for i, (optimized_expr, new_fitness) in enumerate(zip(optimized_expressions, optimized_fitness_scores)):
             if i < len(top_results):
                 top_results[i]['expression_obj'] = optimized_expr
                 top_results[i]['fitness'] = new_fitness
                 top_results[i]['expression_str'] = optimized_expr.to_string()
                 top_results[i]['complexity'] = optimized_expr.complexity()
-        
-        # Re-sort by optimized fitness
+
         top_results.sort(key=lambda x: x['fitness'], reverse=True)
-        
         optimization_time = time.time() - start_time
-        improvement_count = sum(1 for i, new_fitness in enumerate(optimized_fitness_scores) 
-                              if i < len(all_island_results[:self.top_n_select]) and 
-                              new_fitness > all_island_results[i]['fitness'])
-        
+        improvement_count = sum(1 for i, new_fitness in enumerate(optimized_fitness_scores)
+                                if i < len(all_island_results[:self.top_n_select]) and
+                                new_fitness > all_island_results[i]['fitness'])
         print(f"Final optimization completed in {optimization_time:.2f}s")
         print(f"Optimization improved {improvement_count}/{len(optimized_expressions)} expressions")
-        
+
         # Store results
         self.best_expressions = [res['expression_obj'] for res in top_results]
         self.best_fitnesses = [res['fitness'] for res in top_results]
         self.all_results = all_island_results
-        
-        # Print summary
+
         print(f"\nAsynchronous island ensemble fitting complete. Top {len(self.best_expressions)} of {len(all_island_results)} expressions selected:")
         for i, res in enumerate(top_results):
-            print(f"  {i+1}. Fitness: {res['fitness']:.6f}, "
-                  f"Complexity: {res['complexity']:.2f}, "
-                  f"From Island: {res['island_id']}, "
-                  f"Expression: {res['expression_str']}")
+            print(f"  {i+1}. Fitness: {res['fitness']:.6f}, Complexity: {res['complexity']:.2f}, From Island: {res['island_id']}, Expression: {res['expression_str']}")
     
     def _fit_synchronous(self, X: np.ndarray, y: np.ndarray, constant_optimize: bool = False):
         """

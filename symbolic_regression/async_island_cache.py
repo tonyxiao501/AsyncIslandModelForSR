@@ -368,9 +368,12 @@ class AsynchronousIslandCacheManager:
         self.disconnection_detector = DisconnectionDetector(n_islands)
         self.emergency_manager = EmergencyBroadcastManager(n_islands)
         
-        # Create cache for each island
+    # Create cache for each island
         for i in range(n_islands):
             self.island_caches[i] = IslandSpecificCache(i)
+
+        # Optional shared directory for cross-process cache exchange
+        self._shared_dir = None
     
     def seed_all_caches(self, n_inputs: int) -> None:
         """Seed all island caches with diverse initial expressions"""
@@ -485,3 +488,109 @@ class AsynchronousIslandCacheManager:
         }
         
         return stats
+
+    # =====================
+    # File-backed exchange
+    # =====================
+
+    def set_shared_dir(self, shared_dir: str) -> None:
+        """Configure a directory for cross-process cache exchange (pickle files).
+
+        Each island will write its cache to 'island_{id}_cache.pkl' and read others'.
+        """
+        if not isinstance(shared_dir, str) or not shared_dir:
+            raise ValueError("shared_dir must be a non-empty string")
+        import os
+        os.makedirs(shared_dir, exist_ok=True)
+        self._shared_dir = shared_dir
+
+    def export_island_cache(self, island_id: int) -> None:
+        """Persist this island's current cache to disk for other processes to read."""
+        if self._shared_dir is None:
+            return
+        if not isinstance(island_id, int) or island_id < 0:
+            raise ValueError("island_id must be a non-negative integer")
+        try:
+            import os, pickle
+            cache = self.island_caches.get(island_id)
+            if cache is None:
+                return
+            # Snapshot under lock
+            with cache.lock:
+                # Keep only top-K by fitness to reduce file size
+                top_k = 32
+                sorted_exprs = sorted(cache.expressions, key=lambda e: (e.fitness, -e.complexity), reverse=True)[:top_k]
+                serializable = [
+                    {
+                        'expression_str': e.expression_str,
+                        'fitness': float(e.fitness),
+                        'complexity': float(e.complexity),
+                        'from_island': int(e.from_island),
+                        'timestamp': float(e.timestamp),
+                        'generation': int(e.generation),
+                        'is_initial_seed': bool(e.is_initial_seed),
+                    }
+                    for e in sorted_exprs
+                ]
+            path = os.path.join(self._shared_dir, f"island_{island_id}_cache.pkl")
+            with open(path, 'wb') as f:
+                pickle.dump(serializable, f, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            # Fail silently; async exchange is best-effort
+            pass
+
+    def import_foreign_candidates(self, requesting_island: int, max_total: int = 5) -> List[CachedExpression]:
+        """Load candidates from other islands' cache files.
+
+        Returns up to max_total CachedExpression objects sampled from other islands.
+        """
+        if self._shared_dir is None:
+            return []
+        if not isinstance(requesting_island, int) or requesting_island < 0:
+            raise ValueError("requesting_island must be a non-negative integer")
+        try:
+            import os, pickle
+            all_candidates: List[CachedExpression] = []
+            for island in range(self.n_islands):
+                if island == requesting_island:
+                    continue
+                path = os.path.join(self._shared_dir, f"island_{island}_cache.pkl")
+                if not os.path.exists(path):
+                    continue
+                try:
+                    with open(path, 'rb') as f:
+                        data = pickle.load(f)
+                    for d in data:
+                        try:
+                            ce = CachedExpression(
+                                expression_str=str(d.get('expression_str', 'X0')),
+                                fitness=float(d.get('fitness', 0.0)),
+                                complexity=float(d.get('complexity', 1.0)),
+                                from_island=int(d.get('from_island', island)),
+                                timestamp=float(d.get('timestamp', time.time())),
+                                generation=int(d.get('generation', 0)),
+                                is_initial_seed=bool(d.get('is_initial_seed', False)),
+                            )
+                            all_candidates.append(ce)
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+            if not all_candidates:
+                return []
+            # Prefer higher fitness, then lower complexity
+            all_candidates.sort(key=lambda e: (e.fitness, -e.complexity), reverse=True)
+            # Sample without duplicates by expression_str
+            seen = set()
+            selected: List[CachedExpression] = []
+            for e in all_candidates:
+                if e.expression_str in seen:
+                    continue
+                seen.add(e.expression_str)
+                selected.append(e)
+                if len(selected) >= max_total:
+                    break
+            return selected
+        except Exception:
+            return []

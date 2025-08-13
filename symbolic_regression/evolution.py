@@ -246,6 +246,125 @@ class EvolutionEngine:
                         self.regressor.worker_id, population, fitness_scores, generation, self.regressor.n_inputs
                     )
 
+            # Asynchronous island cache migration (if configured)
+            if getattr(self.regressor, '_async_cache_manager', None) is not None and getattr(self.regressor, '_async_island_id', None) is not None:
+                try:
+                    # Narrow types for type checker and access cache manager safely
+                    from typing import cast
+                    from .async_island_cache import AsynchronousIslandCacheManager, CachedExpression
+                    assert self.regressor._async_cache_manager is not None
+                    assert self.regressor._async_island_id is not None
+                    cache_mgr = cast(AsynchronousIslandCacheManager, self.regressor._async_cache_manager)
+                    island_id = int(self.regressor._async_island_id)
+                    timer = getattr(self.regressor, '_async_migration_timer', None)
+
+                    # Decide to send: export current top expressions to local island cache and file
+                    can_send = True
+                    if timer is not None:
+                        try:
+                            can_send = timer.should_send(generation, int(self.regressor._async_last_send_gen), self.regressor.best_fitness_history)
+                        except Exception:
+                            can_send = (generation - int(self.regressor._async_last_send_gen)) >= 15
+                    if can_send:
+                        # Share top-k expressions into island cache
+                        k = max(2, len(population) // 20)  # send fewer to cut overhead
+                        top_idx = sorted(range(len(fitness_scores)), key=lambda i: fitness_scores[i], reverse=True)[:k]
+                        for idx in top_idx:
+                            expr = population[idx]
+                            try:
+                                ce = CachedExpression(
+                                    expression_str=expr.to_string(),
+                                    fitness=float(fitness_scores[idx]),
+                                    complexity=float(expr.complexity()),
+                                    from_island=island_id,
+                                    timestamp=time.time(),
+                                    generation=generation,
+                                    is_initial_seed=False
+                                )
+                                cache_mgr.island_share_expression(island_id, ce)
+                                try:
+                                    self.regressor._async_stats['shared'] += 1
+                                except Exception:
+                                    pass
+                            except Exception:
+                                continue
+                        # Export snapshot for other processes (throttled)
+                        try:
+                            # Only export 1 out of 3 sends to cut disk I/O
+                            if (self.regressor._async_stats.get('send_events', 0) % 3) == 0:
+                                cache_mgr.export_island_cache(island_id)
+                                try:
+                                    self.regressor._async_stats['exports'] += 1
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        self.regressor._async_last_send_gen = generation
+                        try:
+                            self.regressor._async_stats['send_events'] += 1
+                        except Exception:
+                            pass
+
+                    # Decide to receive: import candidates and merge
+                    can_recv = True
+                    if timer is not None:
+                        try:
+                            diversity_score = self.regressor.diversity_history[-1] if self.regressor.diversity_history else 1.0
+                            can_recv = timer.should_receive(generation, int(self.regressor._async_last_recv_gen), float(diversity_score))
+                        except Exception:
+                            can_recv = (generation - int(self.regressor._async_last_recv_gen)) >= 15
+                    if can_recv:
+                        # Pull from in-memory topology caches first
+                        candidates = cache_mgr.island_import_expressions(island_id, max_count=2)
+                        try:
+                            self.regressor._async_stats['received_candidates'] += len(candidates)
+                        except Exception:
+                            pass
+                        # Also pull from file-backed caches if available
+                        try:
+                            file_candidates = cache_mgr.import_foreign_candidates(island_id, max_total=2)
+                            candidates.extend(file_candidates)
+                            try:
+                                self.regressor._async_stats['file_candidates'] += len(file_candidates)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+
+                        if candidates:
+                            # Reconstruct expressions and inject by replacing worst individuals
+                            from .expression_tree import Expression
+                            rebuilt = []
+                            for c in candidates:
+                                try:
+                                    rebuilt.append((Expression.from_string(c.expression_str, self.regressor.n_inputs), float(c.fitness)))
+                                    try:
+                                        self.regressor._async_stats['rebuilt'] += 1
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    continue
+                            if rebuilt:
+                                # Prepare indices to replace: worst by fitness
+                                worst_idx = sorted(range(len(fitness_scores)), key=lambda i: fitness_scores[i])[:len(rebuilt)]
+                                for tgt, (expr_obj, fit_hint) in zip(worst_idx, rebuilt):
+                                    if self.pop_manager.is_expression_valid_cached(expr_obj):
+                                        population[tgt] = expr_obj
+                                        # Defer exact recomputation to next loop; keep current fitness
+                                        # to avoid immediate full re-eval overhead
+                                        try:
+                                            self.regressor._async_stats['injected'] += 1
+                                        except Exception:
+                                            pass
+                                self.regressor._async_last_recv_gen = generation
+                                try:
+                                    self.regressor._async_stats['receive_events'] += 1
+                                except Exception:
+                                    pass
+                except Exception:
+                    # Best-effort; async path must not break evolution
+                    pass
+
             # Debug CSV logging
             if self.regressor.debug_csv_path:
                 self._write_debug_csv(generation, population, fitness_scores, diversity_score)
@@ -506,8 +625,8 @@ class EvolutionEngine:
                 sticky_T = int(getattr(self.regressor, 'lexicase_bag_sticky_generations', 0) or 0)
                 if sticky_T > 0:
                     if not hasattr(self.regressor, '_lexicase_bag_state'):
-                        self.regressor._lexicase_bag_state = {'indices': None, 'age': 0}
-                    bag = self.regressor._lexicase_bag_state
+                        setattr(self.regressor, '_lexicase_bag_state', {'indices': None, 'age': 0})
+                    bag = getattr(self.regressor, '_lexicase_bag_state')
                 else:
                     bag = {'indices': None, 'age': 0}
 
@@ -559,7 +678,7 @@ class EvolutionEngine:
                     errors = full_errors
                 # Persist bag state back to regressor if sticky
                 if getattr(self.regressor, 'lexicase_bag_sticky_generations', 0):
-                    self.regressor._lexicase_bag_state = bag
+                    setattr(self.regressor, '_lexicase_bag_state', bag)
             except Exception:
                 errors = None
         

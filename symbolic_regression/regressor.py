@@ -65,6 +65,7 @@ class MIMOSymbolicRegressor:
                  huber_delta: float = 1.0
                  ):
 
+        # Core hyperparameters
         self.population_size = population_size
         self.generations = generations
         self.mutation_rate = mutation_rate
@@ -74,7 +75,6 @@ class MIMOSymbolicRegressor:
         self.parsimony_coefficient = parsimony_coefficient
         self.sympy_simplify = sympy_simplify
         self.advanced_simplify = advanced_simplify
-
         self.console_log = console_log
 
         # Optimization control parameters
@@ -82,13 +82,13 @@ class MIMOSymbolicRegressor:
         self.evolution_constant_optimize = evolution_constant_optimize
         self.final_optimization_generations = final_optimization_generations
 
-        # Enhanced evolution parameters
+        # Evolution parameters
         self.diversity_threshold = diversity_threshold
         self.adaptive_rates = adaptive_rates
         self.restart_threshold = restart_threshold
         self.elite_fraction = elite_fraction
 
-        # Early termination and late extension parameters
+        # Early termination / late extension
         self.enable_early_termination = enable_early_termination
         self.early_termination_threshold = early_termination_threshold
         self.early_termination_check_interval = early_termination_check_interval
@@ -97,12 +97,11 @@ class MIMOSymbolicRegressor:
         self.late_extension_generations = late_extension_generations
         self.late_extension_triggered = False
 
-        # Optional features (off by default)
+        # Optional features
         self.enable_pareto_tracking = enable_pareto_tracking
         self.pareto_capacity = pareto_capacity
         self.pareto_csv_path = pareto_csv_path
         self.use_lexicase = use_lexicase
-        # Lexicase tuning
         self.lexicase_epsilon = lexicase_epsilon
         self.lexicase_case_subsample = lexicase_case_subsample
         self.lexicase_case_fraction = lexicase_case_fraction
@@ -110,7 +109,7 @@ class MIMOSymbolicRegressor:
         self.lexicase_informative_fraction = lexicase_informative_fraction
 
         # Fitness metric configuration
-        self.loss = loss  # 'r2' | 'mae' | 'huber'
+        self.loss = loss
         self.huber_delta = huber_delta
 
         # Evolution state tracking
@@ -127,35 +126,80 @@ class MIMOSymbolicRegressor:
         self.best_expressions = []
         self.fitness_history = []
 
-        # Population manager (will be initialized when n_inputs is set)
+        # Population manager and elite tracker
         self.pop_manager = None
-
-        # Great Powers mechanism - tracks best 5 expressions across all generations
         self.great_powers = GreatPowers(max_powers=5)
 
-        # Inter-thread communication components
+        # Inter-process/thread communication (legacy exchange)
         self.shared_manager = None
         self.worker_id = None
         self.inter_thread_enabled = False
+
+        # Asynchronous island migration context
+        self._async_cache_manager = None
+        self._async_island_id = None
+        self._async_migration_timer = None
+        self._async_last_send_gen = 0
+        self._async_last_recv_gen = 0
+        # Async migration stats (best-effort, per-fit)
+        self._async_stats = {
+            'shared': 0,               # expressions shared to cache
+            'exports': 0,              # cache file exports
+            'received_candidates': 0,  # total received from in-memory caches
+            'file_candidates': 0,      # total received from file caches
+            'rebuilt': 0,              # successfully rebuilt Expression objects
+            'injected': 0,             # injected into population
+            'send_events': 0,          # number of send decisions
+            'receive_events': 0        # number of receive decisions
+        }
 
         # Debug CSV tracking
         self.debug_csv_path = None
         self.debug_worker_id = None
 
+        # Sympy simplifier
         if self.advanced_simplify:
             self.sympy_simplifier = SymPySimplifier()
 
-        # Evolution engine (will be initialized in fit())
+        # Evolution engine placeholder
         self.evolution_engine = None
         # Internal state for lexicase sticky bag (indices/age)
         self._lexicase_bag_state = {'indices': None, 'age': 0}
 
-        # Initialize adaptive parsimony system (uses current parsimony_coefficient as base)
+        # Adaptive parsimony system
         try:
             from .adaptive_parsimony import AdaptiveParsimonySystem
             self._parsimony_system = AdaptiveParsimonySystem(self.parsimony_coefficient, domain_type="general")
         except Exception:
             self._parsimony_system = None
+
+    def enable_async_island_migration(self, cache_manager, island_id: int, migration_timer=None):
+        """Enable asynchronous island cache migration for this regressor instance.
+
+        cache_manager: AsynchronousIslandCacheManager
+        island_id: int
+        migration_timer: PoissonMigrationTimer or None
+        """
+        self._async_cache_manager = cache_manager
+        self._async_island_id = int(island_id)
+        self._async_migration_timer = migration_timer
+        self._async_last_send_gen = 0
+        self._async_last_recv_gen = 0
+        # reset stats
+        self._async_stats = {
+            'shared': 0,
+            'exports': 0,
+            'received_candidates': 0,
+            'file_candidates': 0,
+            'rebuilt': 0,
+            'injected': 0,
+            'send_events': 0,
+            'receive_events': 0
+        }
+
+    def get_async_migration_stats(self) -> dict:
+        """Return best-effort async migration stats for this regressor run."""
+        return dict(self._async_stats)
 
     def enable_inter_thread_communication(self, shared_data, worker_id: int):
         """Enable inter-thread communication for this regressor instance"""
