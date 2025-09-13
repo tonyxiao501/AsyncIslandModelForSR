@@ -133,6 +133,31 @@ def island_worker_process(args):
      migration_interval, topology_data, migration_manager_data, temp_dir) = args
     
     try:
+        # Optional profiling
+        profiler = None
+        profile_enabled = False
+        try:
+            import os, cProfile
+            if os.environ.get("PROFILE_WORKER") == "1":
+                profile_enabled = True
+                profiler = cProfile.Profile()
+                profiler.enable()
+        except Exception:
+            profiler = None
+
+        # Optional timing instrumentation
+        island_start_time = time.time()
+        timing_enabled = False
+        timing_out_path = None
+        try:
+            import os, json  # noqa
+            if os.environ.get("RECORD_ISLAND_TIMES") == "1":
+                timing_enabled = True
+                out_dir = os.environ.get("PROFILE_OUT_DIR", ".")
+                os.makedirs(out_dir, exist_ok=True)
+                timing_out_path = os.path.join(out_dir, "sync_island_times.txt")
+        except Exception:
+            timing_enabled = False
         # Set unique seed for this island
         island_seed = hash((island_id, time.time())) % 2**32
         random.seed(island_seed)
@@ -228,6 +253,29 @@ def island_worker_process(args):
                     pass
         
         # Return best results from this island
+        if profile_enabled and profiler is not None:
+            try:
+                profiler.disable()
+                import pstats, io, os as _os
+                s = io.StringIO()
+                ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+                ps.print_stats(40)
+                out_dir = _os.environ.get("PROFILE_OUT_DIR", ".")
+                _os.makedirs(out_dir, exist_ok=True)
+                out_path = _os.path.join(out_dir, f"profile_sync_island_{island_id}.txt")
+                with open(out_path, 'w') as fh:
+                    fh.write(s.getvalue())
+            except Exception:
+                pass
+        if timing_enabled and timing_out_path:
+            try:
+                import json, os as _os  # noqa
+                import os as __os
+                rec = {"run_id": __os.environ.get("RUN_ID"), "island_id": island_id, "start": island_start_time, "end": time.time()}
+                with open(timing_out_path, 'a') as f:
+                    f.write(json.dumps(rec) + "\n")
+            except Exception:
+                pass
         if all_results:
             # Sort by fitness and return top results
             all_results.sort(key=lambda x: x['fitness'], reverse=True)
@@ -251,6 +299,31 @@ def asynchronous_island_worker_process(args) -> List[Dict[str, Any]]:
     (island_id, regressor_params, X, y, total_generations, cache_manager_data,
      topology_data, migration_timer_params, shared_dir) = args
     try:
+        # Optional profiling
+        profiler = None
+        profile_enabled = False
+        try:
+            import os, cProfile
+            if os.environ.get("PROFILE_WORKER") == "1":
+                profile_enabled = True
+                profiler = cProfile.Profile()
+                profiler.enable()
+        except Exception:
+            profiler = None
+
+        # Optional timing instrumentation
+        island_start_time = time.time()
+        timing_enabled = False
+        timing_out_path = None
+        try:
+            import os, json  # noqa
+            if os.environ.get("RECORD_ISLAND_TIMES") == "1":
+                timing_enabled = True
+                out_dir = os.environ.get("PROFILE_OUT_DIR", ".")
+                os.makedirs(out_dir, exist_ok=True)
+                timing_out_path = os.path.join(out_dir, "async_island_times.txt")
+        except Exception:
+            timing_enabled = False
         # Seed per-process RNGs
         island_seed = hash((island_id, time.time())) % 2**32
         random.seed(island_seed)
@@ -321,6 +394,29 @@ def asynchronous_island_worker_process(args) -> List[Dict[str, Any]]:
                         pass
                 all_results.append(rec)
 
+        if profile_enabled and profiler is not None:
+            try:
+                profiler.disable()
+                import pstats, io, os as _os
+                s = io.StringIO()
+                ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+                ps.print_stats(40)
+                out_dir = _os.environ.get("PROFILE_OUT_DIR", ".")
+                _os.makedirs(out_dir, exist_ok=True)
+                out_path = _os.path.join(out_dir, f"profile_async_island_{island_id}.txt")
+                with open(out_path, 'w') as fh:
+                    fh.write(s.getvalue())
+            except Exception:
+                pass
+        if timing_enabled and timing_out_path:
+            try:
+                import json, os as _os  # noqa
+                import os as __os
+                rec = {"run_id": __os.environ.get("RUN_ID"), "island_id": island_id, "start": island_start_time, "end": time.time()}
+                with open(timing_out_path, 'a') as f:
+                    f.write(json.dumps(rec) + "\n")
+            except Exception:
+                pass
         if all_results:
             all_results.sort(key=lambda x: x['fitness'], reverse=True)
             return all_results[:5]
